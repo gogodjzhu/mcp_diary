@@ -1,0 +1,12 @@
+# Build artifacts
+/bin/
+
+# Frontend dependencies (the built assets in internal/webui/dist are committed
+# so that `go build` works without Node).
+web/node_modules/
+web/dist/
+web/.env.local
+
+# Local secrets and stray artifacts — never commit these
+/Identify
+/image.png

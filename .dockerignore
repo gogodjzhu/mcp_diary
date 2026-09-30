@@ -1,0 +1,26 @@
+# Build artifacts and local data
+/bin/
+/dist/
+/data/
+
+# Frontend
+web/node_modules/
+web/.env
+web/.env.local
+
+# Local secrets and stray artifacts
+/Identify
+/image.png
+
+# Go
+*.test
+*.out
+coverage.*
+
+# VCS / editor / OS
+.git
+.gitignore
+.github/
+.idea/
+.vscode/
+.DS_Store

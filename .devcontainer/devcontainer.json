@@ -1,0 +1,54 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/go
+{
+  "name": "mcp-diary",
+  // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  // Features to add to the dev container. More info: https://containers.dev/features.
+  "features": {
+    "ghcr.io/devcontainers/features/node:2.0.0": {
+      "version": "22",
+      "npmVersion": "10.9.2"
+    },
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.25"
+    }
+  },
+  // Use 'forwardPorts' to make a list of ports inside the container available locally.
+  "forwardPorts": [8080, 5173, 19876],
+  "portsAttributes": {
+    "8080": {
+      "label": "mcp-diary",
+      "onAutoForward": "notify"
+    },
+    "5173": {
+      "label": "vite",
+      "onAutoForward": "silent"
+    },
+    "19876": {
+      "label": "mcp oauth callback",
+      "onAutoForward": "silent"
+    }
+  },
+  // Use 'postCreateCommand' to run commands after the container is created.
+  "postCreateCommand": "bash ./.devcontainer/init.sh",
+  "runArgs": [
+    "--name",
+    "mcp-diary"
+  ],
+  "containerEnv": {
+    "TZ": "Asia/Shanghai"
+  },
+  // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+  "remoteUser": "root",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "Vue.volar",
+        "humao.rest-client",
+        "tooltitudeteam.tooltitude"
+      ]
+    }
+  }
+}

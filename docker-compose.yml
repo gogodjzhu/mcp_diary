@@ -1,0 +1,26 @@
+services:
+  mcp-diary:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    image: mcp-diary:${VERSION:-dev}
+    ports:
+      - "${MCP_PORT:-8080}:8080"
+    command:
+      - serve
+      - --root=/data
+      - --addr=:8080
+      - --auth-enabled
+      - --auth-client-id=${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID in .env}
+      - --auth-public-url=${MCP_PUBLIC_URL:-}
+      - --auth-issuer=${AUTH_ISSUER:-https://accounts.google.com}
+      - --auth-scopes=${AUTH_SCOPES:-openid,email,profile}
+      - --web-enabled
+    volumes:
+      - mcp-diary-data:/data
+    restart: unless-stopped
+
+volumes:
+  mcp-diary-data:

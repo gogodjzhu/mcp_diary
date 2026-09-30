@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "mcp-diary": {
+        "type": "remote",
+        "url": "http://localhost:8080/mcp",
+        "oauth": {
+          "client_id": "426794749941-hqr0pe3eu2rs91qhp5ihhflmh7uan191.apps.googleusercontent.com",
+          "client_secret": "{env:GOOGLE_CLIENT_SECRET}",
+          "scope": "openid email profile",
+          "callback_port": 19876
+        }
+      }
+    }
+  }
+}
