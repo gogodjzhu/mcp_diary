@@ -10,3 +10,6 @@ web/.env.local
 # Local secrets and stray artifacts — never commit these
 /Identify
 /image.png
+
+# Local OAuth state written under a repo-root workspace
+/auth/

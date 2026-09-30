@@ -33,6 +33,7 @@ func newServeCommand(version string, logLevel, logFormat *string) *cobra.Command
 			if err != nil {
 				return err
 			}
+			defer func() { _ = application.Close() }()
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -52,18 +53,15 @@ func newServeCommand(version string, logLevel, logFormat *string) *cobra.Command
 	flags.Int64Var(&cfg.MaxReadBytes, "max-read-bytes", cfg.MaxReadBytes, "maximum bytes returned by a single read")
 	flags.Int64Var(&cfg.MaxRequestBodyBytes, "max-request-bytes", cfg.MaxRequestBodyBytes, "maximum HTTP request body size in bytes")
 
-	flags.BoolVar(&cfg.Auth.Enabled, "auth-enabled", cfg.Auth.Enabled, "require OAuth 2.0 / OIDC bearer tokens (Google by default)")
-	flags.StringVar(&cfg.Auth.Issuer, "auth-issuer", cfg.Auth.Issuer, "authorization server issuer advertised in resource metadata")
-	flags.StringVar(&cfg.Auth.ClientID, "auth-client-id", cfg.Auth.ClientID, "OAuth client id tokens must be minted for (audience)")
-	flags.StringVar(&cfg.Auth.ClientSecret, "auth-client-secret", cfg.Auth.ClientSecret, "OAuth client secret (only for providers that require it)")
-	flags.StringVar(&cfg.Auth.Audience, "auth-audience", cfg.Auth.Audience, "override the expected token audience (defaults to client id)")
-	flags.StringSliceVar(&cfg.Auth.Scopes, "auth-scopes", cfg.Auth.Scopes, "required scopes (comma separated)")
-	flags.StringVar(&cfg.Auth.PublicURL, "auth-public-url", cfg.Auth.PublicURL, "externally reachable base URL, e.g. https://mcp.example.com")
-	flags.StringVar(&cfg.Auth.TokenInfoURL, "auth-tokeninfo-url", cfg.Auth.TokenInfoURL, "token validation endpoint")
-	flags.StringVar(&cfg.Auth.UserInfoURL, "auth-userinfo-url", cfg.Auth.UserInfoURL, "optional userinfo endpoint for profile enrichment")
-	flags.BoolVar(&cfg.Auth.RequireVerifiedEmail, "auth-require-verified-email", cfg.Auth.RequireVerifiedEmail, "reject tokens whose email is not verified")
-	flags.DurationVar(&cfg.Auth.CacheTTL, "auth-cache-ttl", cfg.Auth.CacheTTL, "how long successful token verifications are cached")
-	flags.DurationVar(&cfg.Auth.HTTPTimeout, "auth-http-timeout", cfg.Auth.HTTPTimeout, "timeout for authorization-server calls")
+	flags.BoolVar(&cfg.Auth.Enabled, "auth-enabled", cfg.Auth.Enabled, "require OAuth 2.1 authentication (mcp-diary acts as its own authorization server)")
+	flags.StringVar(&cfg.Auth.PublicURL, "auth-public-url", cfg.Auth.PublicURL, "externally reachable base URL, e.g. https://mcp.example.com (OAuth issuer)")
+	flags.StringVar(&cfg.Auth.GoogleClientID, "google-client-id", cfg.Auth.GoogleClientID, "Google OAuth client id used server-side")
+	flags.StringVar(&cfg.Auth.GoogleClientSecret, "google-client-secret", cfg.Auth.GoogleClientSecret, "Google OAuth client secret (kept on the server)")
+	flags.StringVar(&cfg.Auth.EncryptionKey, "auth-encryption-key", cfg.Auth.EncryptionKey, "32-byte key (base64 or hex) encrypting OAuth state at rest")
+	flags.DurationVar(&cfg.Auth.AccessTokenTTL, "auth-access-token-ttl", cfg.Auth.AccessTokenTTL, "issued access token lifetime")
+	flags.DurationVar(&cfg.Auth.RefreshTokenTTL, "auth-refresh-token-ttl", cfg.Auth.RefreshTokenTTL, "issued refresh token lifetime")
+	flags.IntVar(&cfg.Auth.MaxClientsPerIP, "auth-max-clients-per-ip", cfg.Auth.MaxClientsPerIP, "maximum dynamic client registrations per IP")
+	flags.StringVar(&cfg.Auth.StoreDir, "auth-store-dir", cfg.Auth.StoreDir, "directory (relative to root unless absolute) holding OAuth state")
 	flags.StringVar(&cfg.Auth.UsersDir, "auth-users-dir", cfg.Auth.UsersDir, "directory (relative to root unless absolute) holding per-user workspaces")
 
 	flags.BoolVar(&cfg.Web.Enabled, "web-enabled", cfg.Web.Enabled, "serve the web UI and REST API (requires --auth-enabled)")

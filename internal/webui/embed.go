@@ -5,6 +5,9 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"os"
+	"path"
+	"strings"
 )
 
 // assets holds the built web application. The dist directory is populated by
@@ -16,14 +19,33 @@ var assets embed.FS
 
 // Handler serves the web UI. When staticDir is non-empty the assets are served
 // from disk (useful during development); otherwise the embedded build is used.
+//
+// Unknown paths fall back to index.html so client-side routes such as the
+// OAuth redirect target (/auth/callback) are handled by the SPA.
 func Handler(staticDir string) http.Handler {
+	var fsys fs.FS
 	if staticDir != "" {
-		return http.FileServer(http.Dir(staticDir))
+		fsys = os.DirFS(staticDir)
+	} else {
+		sub, err := fs.Sub(assets, "dist")
+		if err != nil {
+			return http.NotFoundHandler()
+		}
+		fsys = sub
 	}
 
-	sub, err := fs.Sub(assets, "dist")
-	if err != nil {
-		return http.NotFoundHandler()
-	}
-	return http.FileServer(http.FS(sub))
+	fileServer := http.FileServer(http.FS(fsys))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if name != "" {
+			info, err := fs.Stat(fsys, name)
+			if err != nil || info.IsDir() {
+				// Missing paths and directories (which would otherwise be
+				// listed) fall through to the SPA entry point.
+				r = r.Clone(r.Context())
+				r.URL.Path = "/"
+			}
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }

@@ -11,13 +11,10 @@ RUN npm ci
 
 COPY web/ ./
 # Writes the production build into /src/internal/webui/dist.
-# Vite inlines import.meta.env at build time, so the client id must be provided.
-ARG VITE_GOOGLE_CLIENT_ID=""
-ENV VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
 RUN npm run build
 
 # ---- go build stage ----------------------------------------------------------
-FROM golang:1.25 AS build
+FROM golang:1.26 AS build
 
 WORKDIR /src
 

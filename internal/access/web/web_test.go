@@ -1,9 +1,7 @@
 package web_test
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,21 +12,6 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/auth"
 	"github.com/gogodjzhu/mcp-diary/internal/workspace"
 )
-
-// fakeVerifier accepts a single hard-coded token and rejects everything else.
-type fakeVerifier struct{}
-
-func (fakeVerifier) Verify(_ context.Context, token string) (*auth.Identity, error) {
-	if token != "good-token" {
-		return nil, errors.New("invalid access token")
-	}
-	return &auth.Identity{
-		Subject: "google-sub-1",
-		Email:   "alice@example.com",
-		Name:    "Alice",
-		Scopes:  []string{"openid", "email", "profile"},
-	}, nil
-}
 
 func newHandler(t *testing.T) (*web.Handler, string) {
 	t.Helper()
@@ -52,14 +35,15 @@ func newHandler(t *testing.T) (*web.Handler, string) {
 		t.Fatalf("seed file: %v", err)
 	}
 
-	return web.New(web.Config{Verifier: fakeVerifier{}, Workspaces: workspaces}), root
+	return web.New(web.Config{Workspaces: workspaces}), root
 }
 
 func doRequest(t *testing.T, h http.Handler, method, target, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, target, nil)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if token == "good-token" {
+		identity := &auth.Identity{Subject: "google-sub-1", Email: "alice@example.com", Name: "Alice"}
+		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

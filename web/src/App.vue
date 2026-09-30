@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { accessToken, beginLogin, completeLogin, signOut as clearSession } from './auth'
 import { getMe, listFiles, type Entry, type Me } from './api'
-
-const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? ''
 
 const token = ref('')
 const me = ref<Me | null>(null)
@@ -10,25 +9,10 @@ const entries = ref<Entry[]>([])
 const error = ref('')
 const loading = ref(false)
 
-let tokenClient: GoogleTokenClient | null = null
-
-function loadGis(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.google?.accounts?.oauth2) {
-      resolve()
-      return
-    }
-    const script = document.createElement('script')
-    script.src = 'https://accounts.google.com/gsi/client'
-    script.async = true
-    script.defer = true
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('加载 Google Identity Services 失败'))
-    document.head.appendChild(script)
-  })
-}
-
 async function refresh(): Promise<void> {
+  if (!token.value) {
+    return
+  }
   loading.value = true
   error.value = ''
   try {
@@ -37,51 +21,33 @@ async function refresh(): Promise<void> {
     entries.value = listing.entries
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
+    clearSession()
     token.value = ''
+    me.value = null
+    entries.value = []
   } finally {
     loading.value = false
   }
 }
 
 onMounted(async () => {
-  if (!clientId) {
-    error.value = '未配置 VITE_GOOGLE_CLIENT_ID'
-    return
-  }
   try {
-    await loadGis()
-    tokenClient = window.google!.accounts!.oauth2!.initTokenClient({
-      client_id: clientId,
-      scope: 'openid email profile',
-      callback: async (response) => {
-        if (response.error || !response.access_token) {
-          error.value = response.error ?? '登录失败'
-          return
-        }
-        token.value = response.access_token
-        await refresh()
-      },
-    })
+    await completeLogin()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
+  token.value = await accessToken()
+  if (token.value) {
+    await refresh()
+  }
 })
 
-function signIn(): void {
-  if (!tokenClient) {
-    error.value = 'Google Identity Services 尚未就绪'
-    return
-  }
-  tokenClient.requestAccessToken()
-}
-
 function signOut(): void {
-  if (token.value) {
-    window.google?.accounts?.oauth2?.revoke(token.value)
-  }
+  clearSession()
   token.value = ''
   me.value = null
   entries.value = []
+  error.value = ''
 }
 </script>
 
@@ -91,7 +57,7 @@ function signOut(): void {
     <p class="hint">使用 Google 账号登录，查看你自己的工作区。</p>
 
     <div v-if="!token">
-      <button :disabled="!clientId" @click="signIn">使用 Google 登录</button>
+      <button @click="beginLogin">使用 Google 登录</button>
     </div>
     <div v-else class="session">
       <span v-if="me">已登录：{{ me.email || me.username }}</span>

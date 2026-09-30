@@ -23,6 +23,8 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8080',
       '/mcp': 'http://localhost:8080',
+      '/oauth': 'http://localhost:8080',
+      '/.well-known': 'http://localhost:8080',
     },
   },
 })

@@ -12,9 +12,6 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/workspace"
 )
 
-// errUnauthorized marks a request rejected before reaching the verifier.
-var errUnauthorized = errors.New("missing bearer token")
-
 func (h *Handler) handleMe(w http.ResponseWriter, identity *auth.Identity) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"subject":  identity.Subject,
@@ -82,16 +79,6 @@ func queryInt(r *http.Request, key string) int64 {
 		return 0
 	}
 	return value
-}
-
-func bearerToken(r *http.Request) (string, bool) {
-	const prefix = "Bearer "
-	header := r.Header.Get("Authorization")
-	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
-		return "", false
-	}
-	token := strings.TrimSpace(header[len(prefix):])
-	return token, token != ""
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -1,6 +1,6 @@
-// Package auth implements OAuth 2.0 / OIDC resource-server authentication for
-// the MCP server: bearer-token verification, request middleware and the helpers
-// needed to advertise protected-resource metadata (RFC 9728).
+// Package auth describes the authenticated principal carried on a request.
+// Token verification lives in the authorization server (internal/oauthserver);
+// this package only holds the identity the workspace layer reads from context.
 package auth
 
 import "strings"

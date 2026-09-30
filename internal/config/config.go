@@ -49,7 +49,7 @@ type Config struct {
 	ReadOnly     bool
 	MaxReadBytes int64
 
-	// Auth configures the OAuth 2.0 / OIDC resource-server behaviour.
+	// Auth configures the OAuth 2.1 authorization server.
 	Auth AuthConfig
 
 	// Web configures the browser UI and REST API access layer.
@@ -71,42 +71,34 @@ type WebConfig struct {
 	StaticDir string
 }
 
-// AuthConfig configures OAuth 2.0 / OIDC resource-server authentication. When
-// Enabled is true every MCP request must carry a bearer token issued by the
-// configured provider (Google by default) and each authenticated user gets an
-// isolated workspace underneath UsersDir.
+// AuthConfig configures authentication. When Enabled is true mcp-diary acts as
+// its own OAuth 2.1 authorization server: MCP clients and the browser UI obtain
+// tokens from this server (registering themselves dynamically), and the server
+// federates user identity to Google behind the scenes. Each authenticated user
+// gets an isolated workspace underneath UsersDir.
 type AuthConfig struct {
-	// Enabled turns on bearer-token authentication.
+	// Enabled turns on OAuth 2.1 authentication.
 	Enabled bool
-	// Issuer is the canonical authorization-server identifier advertised in the
-	// protected resource metadata (Google: https://accounts.google.com).
-	Issuer string
-	// ClientID is the OAuth client id the tokens must be minted for. It is used
-	// as the expected audience.
-	ClientID string
-	// ClientSecret is only required by providers that need confidential client
-	// authentication; Google token validation does not.
-	ClientSecret string
-	// Audience overrides the expected token audience. Defaults to ClientID.
-	Audience string
-	// Scopes are the scopes a client must request and a token must contain.
-	Scopes []string
 	// PublicURL is the externally reachable base URL of this server (for
-	// example https://mcp.example.com). When empty it is derived from the
-	// request, which is only correct when the server is directly reachable.
+	// example https://mcp.example.com). It is the OAuth issuer identifier.
 	PublicURL string
-	// TokenInfoURL is the provider endpoint used to validate opaque access
-	// tokens (Google: https://oauth2.googleapis.com/tokeninfo).
-	TokenInfoURL string
-	// UserInfoURL is an optional fallback endpoint, used to enrich the identity
-	// with profile data such as the display name.
-	UserInfoURL string
-	// RequireVerifiedEmail rejects identities whose email is not verified.
-	RequireVerifiedEmail bool
-	// CacheTTL is how long a successful verification is cached.
-	CacheTTL time.Duration
-	// HTTPTimeout bounds provider calls.
-	HTTPTimeout time.Duration
+	// GoogleClientID is the Google OAuth client id used on the server side.
+	GoogleClientID string
+	// GoogleClientSecret is the Google OAuth client secret. It never leaves the
+	// server.
+	GoogleClientSecret string
+	// EncryptionKey encrypts OAuth state at rest. 32 bytes, base64 or hex
+	// encoded. Empty stores state unencrypted (development only).
+	EncryptionKey string
+	// AccessTokenTTL is how long issued access tokens are valid.
+	AccessTokenTTL time.Duration
+	// RefreshTokenTTL is how long issued refresh tokens are valid.
+	RefreshTokenTTL time.Duration
+	// MaxClientsPerIP caps dynamic client registrations per IP address.
+	MaxClientsPerIP int
+	// StoreDir is the directory, relative to Root unless absolute, holding the
+	// OAuth state file.
+	StoreDir string
 	// UsersDir is the directory, relative to Root unless absolute, where
 	// per-user workspaces are created.
 	UsersDir string
@@ -130,14 +122,11 @@ func Default() Config {
 		Root:                ".",
 		MaxReadBytes:        1 << 20, // 1 MiB
 		Auth: AuthConfig{
-			Issuer:               "https://accounts.google.com",
-			Scopes:               []string{"openid", "email", "profile"},
-			TokenInfoURL:         "https://oauth2.googleapis.com/tokeninfo",
-			UserInfoURL:          "https://openidconnect.googleapis.com/v1/userinfo",
-			RequireVerifiedEmail: true,
-			CacheTTL:             5 * time.Minute,
-			HTTPTimeout:          10 * time.Second,
-			UsersDir:             "users",
+			AccessTokenTTL:  time.Hour,
+			RefreshTokenTTL: 90 * 24 * time.Hour,
+			MaxClientsPerIP: 10,
+			StoreDir:        "auth",
+			UsersDir:        "users",
 		},
 		Web: WebConfig{
 			Enabled: true,
@@ -188,34 +177,29 @@ func (a AuthConfig) validate() error {
 	if !a.Enabled {
 		return nil
 	}
-	if a.Issuer == "" {
-		return fmt.Errorf("auth issuer must not be empty")
+	if a.PublicURL == "" {
+		return fmt.Errorf("auth public URL must not be empty when auth is enabled")
 	}
-	if a.ClientID == "" {
-		return fmt.Errorf("auth client id must not be empty when auth is enabled")
+	if a.GoogleClientID == "" {
+		return fmt.Errorf("google client id must not be empty when auth is enabled")
 	}
-	if a.TokenInfoURL == "" && a.UserInfoURL == "" {
-		return fmt.Errorf("auth requires a token info or user info endpoint")
-	}
-	if len(a.Scopes) == 0 {
-		return fmt.Errorf("auth requires at least one scope")
+	if a.GoogleClientSecret == "" {
+		return fmt.Errorf("google client secret must not be empty when auth is enabled")
 	}
 	if a.UsersDir == "" {
 		return fmt.Errorf("auth users directory must not be empty")
 	}
-	if a.CacheTTL < 0 {
-		return fmt.Errorf("auth cache TTL must not be negative")
+	if a.StoreDir == "" {
+		return fmt.Errorf("auth store directory must not be empty")
 	}
-	if a.HTTPTimeout <= 0 {
-		return fmt.Errorf("auth HTTP timeout must be positive")
+	if a.AccessTokenTTL <= 0 {
+		return fmt.Errorf("auth access token TTL must be positive")
+	}
+	if a.RefreshTokenTTL <= 0 {
+		return fmt.Errorf("auth refresh token TTL must be positive")
+	}
+	if a.MaxClientsPerIP < 0 {
+		return fmt.Errorf("auth max clients per IP must not be negative")
 	}
 	return nil
-}
-
-// ExpectedAudience returns the audience tokens must be minted for.
-func (a AuthConfig) ExpectedAudience() string {
-	if a.Audience != "" {
-		return a.Audience
-	}
-	return a.ClientID
 }

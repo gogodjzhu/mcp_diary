@@ -10,7 +10,8 @@ import (
 
 // StreamableHandler returns the Streamable HTTP handler for the MCP endpoint.
 // Authentication is applied by the caller (the assembly root), so the handler
-// itself is unauthenticated.
+// itself is unauthenticated. The OAuth protected-resource metadata and
+// authorization-server metadata are served by the authorization-server layer.
 func (s *Server) StreamableHandler() http.Handler {
 	return server.NewStreamableHTTPServer(s.mcp,
 		server.WithStateLess(true),
@@ -26,29 +27,4 @@ func (s *Server) StreamableHandler() http.Handler {
 			return ctx
 		}),
 	)
-}
-
-// RegisterMetadata mounts the OAuth 2.0 Protected Resource Metadata (RFC 9728)
-// handlers for the MCP endpoint on mux.
-func (s *Server) RegisterMetadata(mux *http.ServeMux) {
-	handler := s.metadataHandler()
-	mux.HandleFunc(auth.MetadataPath(s.cfg.EndpointPath), handler)
-	if bare := server.WellKnownProtectedResourcePath; bare != auth.MetadataPath(s.cfg.EndpointPath) {
-		mux.HandleFunc(bare, handler)
-	}
-}
-
-// metadataHandler serves OAuth 2.0 Protected Resource Metadata so clients can
-// discover the authorization server and the scopes they need.
-func (s *Server) metadataHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		cfg := server.ProtectedResourceMetadataConfig{
-			Resource:               auth.ResourceURL(s.cfg.Auth.PublicURL, s.cfg.EndpointPath, r),
-			AuthorizationServers:   []string{s.cfg.Auth.Issuer},
-			ScopesSupported:        s.cfg.Auth.Scopes,
-			BearerMethodsSupported: []string{"header"},
-			ResourceName:           s.cfg.Name,
-		}
-		server.NewProtectedResourceMetadataHandler(cfg).ServeHTTP(w, r)
-	}
 }

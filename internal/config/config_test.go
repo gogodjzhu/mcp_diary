@@ -11,6 +11,13 @@ func TestDefaultIsValid(t *testing.T) {
 	}
 }
 
+func enableAuth(c *Config) {
+	c.Auth.Enabled = true
+	c.Auth.PublicURL = "https://mcp.test"
+	c.Auth.GoogleClientID = "google-client"
+	c.Auth.GoogleClientSecret = "google-secret"
+}
+
 func TestAuthValidation(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -18,17 +25,32 @@ func TestAuthValidation(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "enabled without client id",
+			name: "enabled without public url",
 			mutate: func(c *Config) {
 				c.Auth.Enabled = true
 			},
-			wantErr: "client id",
+			wantErr: "public URL",
+		},
+		{
+			name: "enabled without google client id",
+			mutate: func(c *Config) {
+				enableAuth(c)
+				c.Auth.GoogleClientID = ""
+			},
+			wantErr: "google client id",
+		},
+		{
+			name: "enabled without google secret",
+			mutate: func(c *Config) {
+				enableAuth(c)
+				c.Auth.GoogleClientSecret = ""
+			},
+			wantErr: "google client secret",
 		},
 		{
 			name: "enabled with stdio",
 			mutate: func(c *Config) {
-				c.Auth.Enabled = true
-				c.Auth.ClientID = "id"
+				enableAuth(c)
 				c.Transport = TransportStdio
 			},
 			wantErr: "streamable-http",
@@ -36,8 +58,7 @@ func TestAuthValidation(t *testing.T) {
 		{
 			name: "valid",
 			mutate: func(c *Config) {
-				c.Auth.Enabled = true
-				c.Auth.ClientID = "id"
+				enableAuth(c)
 			},
 		},
 	}
@@ -57,16 +78,5 @@ func TestAuthValidation(t *testing.T) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestExpectedAudienceFallsBackToClientID(t *testing.T) {
-	auth := AuthConfig{ClientID: "abc"}
-	if got := auth.ExpectedAudience(); got != "abc" {
-		t.Fatalf("audience = %q", got)
-	}
-	auth.Audience = "xyz"
-	if got := auth.ExpectedAudience(); got != "xyz" {
-		t.Fatalf("audience = %q", got)
 	}
 }

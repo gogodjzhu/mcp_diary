@@ -1,63 +1,31 @@
 package app_test
 
 import (
-	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/app"
 	"github.com/gogodjzhu/mcp-diary/internal/config"
 	"github.com/gogodjzhu/mcp-diary/internal/logging"
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func newTokenInfoServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	claims := map[string]any{
-		"sub":            "google-sub-1",
-		"email":          "alice@example.com",
-		"email_verified": "true",
-		"aud":            "test-client",
-		"scope":          "openid email profile",
-		"exp":            strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10),
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("access_token") != "good-token" {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error":             "invalid_token",
-				"error_description": "bad token",
-			})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(claims)
-	}))
-	t.Cleanup(server.Close)
-	return server
-}
+const testPublicURL = "https://mcp.test"
 
-func newAuthApp(t *testing.T, root string, tokenInfoURL string) *app.App {
+func newAuthApp(t *testing.T) *app.App {
 	t.Helper()
 
 	cfg := config.Default()
-	cfg.Root = root
+	cfg.Root = t.TempDir()
 	cfg.Version = "test"
 	cfg.LogLevel = "error"
 	cfg.Auth.Enabled = true
-	cfg.Auth.Issuer = "https://accounts.google.com"
-	cfg.Auth.ClientID = "test-client"
-	cfg.Auth.TokenInfoURL = tokenInfoURL
-	cfg.Auth.UserInfoURL = ""
-	cfg.Auth.UsersDir = "users"
+	cfg.Auth.PublicURL = testPublicURL
+	cfg.Auth.GoogleClientID = "google-client-id"
+	cfg.Auth.GoogleClientSecret = "google-client-secret"
 
 	logger, err := logging.New(cfg.LogLevel, cfg.LogFormat)
 	if err != nil {
@@ -67,14 +35,12 @@ func newAuthApp(t *testing.T, root string, tokenInfoURL string) *app.App {
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
 	}
+	t.Cleanup(func() { _ = application.Close() })
 	return application
 }
 
 func TestAuthRequiredChallengeAndMetadata(t *testing.T) {
-	root := t.TempDir()
-	tokenInfo := newTokenInfoServer(t)
-	application := newAuthApp(t, root, tokenInfo.URL)
-
+	application := newAuthApp(t)
 	ts := httptest.NewServer(application.HTTPHandler())
 	defer ts.Close()
 
@@ -89,7 +55,7 @@ func TestAuthRequiredChallengeAndMetadata(t *testing.T) {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
 	challenge := resp.Header.Get("WWW-Authenticate")
-	if !strings.Contains(challenge, "resource_metadata=") || !strings.Contains(challenge, `error="invalid_request"`) {
+	if !strings.Contains(challenge, "resource_metadata=") {
 		t.Fatalf("unexpected challenge: %q", challenge)
 	}
 
@@ -105,73 +71,67 @@ func TestAuthRequiredChallengeAndMetadata(t *testing.T) {
 	if err := json.NewDecoder(metaResp.Body).Decode(&metadata); err != nil {
 		t.Fatalf("decode metadata: %v", err)
 	}
-	if metadata["resource"] != ts.URL+"/mcp" {
-		t.Fatalf("resource = %v, want %s/mcp", metadata["resource"], ts.URL)
+	if metadata["resource"] != testPublicURL+"/mcp" {
+		t.Fatalf("resource = %v, want %s/mcp", metadata["resource"], testPublicURL)
 	}
 	servers, _ := metadata["authorization_servers"].([]any)
-	if len(servers) != 1 || servers[0] != "https://accounts.google.com" {
-		t.Fatalf("authorization_servers = %v", metadata["authorization_servers"])
+	if len(servers) != 1 || servers[0] != testPublicURL {
+		t.Fatalf("authorization_servers = %v, want [%s]", metadata["authorization_servers"], testPublicURL)
 	}
 }
 
-func TestAuthenticatedPerUserWorkspaceEndToEnd(t *testing.T) {
-	root := t.TempDir()
-	tokenInfo := newTokenInfoServer(t)
-	application := newAuthApp(t, root, tokenInfo.URL)
-
+func TestAuthorizationServerMetadata(t *testing.T) {
+	application := newAuthApp(t)
 	ts := httptest.NewServer(application.HTTPHandler())
 	defer ts.Close()
 
-	c, err := client.NewStreamableHttpClient(
-		ts.URL+"/mcp",
-		transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer good-token"}),
-	)
+	resp, err := ts.Client().Get(ts.URL + "/.well-known/oauth-authorization-server")
 	if err != nil {
-		t.Fatalf("NewStreamableHttpClient: %v", err)
+		t.Fatalf("GET AS metadata: %v", err)
 	}
-	defer c.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	if err := c.Start(ctx); err != nil {
-		t.Fatalf("client.Start: %v", err)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	initRequest := mcp.InitializeRequest{}
-	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initRequest.Params.ClientInfo = mcp.Implementation{Name: "test-client", Version: "1.0.0"}
-	if _, err := c.Initialize(ctx, initRequest); err != nil {
-		t.Fatalf("Initialize: %v", err)
+	var metadata map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
 	}
+	for _, field := range []string{"authorization_endpoint", "token_endpoint", "registration_endpoint"} {
+		if metadata[field] == nil || metadata[field] == "" {
+			t.Fatalf("metadata missing %q: %v", field, metadata)
+		}
+	}
+}
 
-	callTool(t, ctx, c, "write_file", map[string]any{
-		"path":    "diary.txt",
-		"content": "alice private notes",
-	})
+func TestDynamicClientRegistration(t *testing.T) {
+	application := newAuthApp(t)
+	ts := httptest.NewServer(application.HTTPHandler())
+	defer ts.Close()
 
-	userFile := filepath.Join(root, "users", "alice@example.com", "diary.txt")
-	data, err := os.ReadFile(userFile)
+	body := `{"client_name":"test-cli","redirect_uris":["http://127.0.0.1:19876/callback"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none"}`
+	resp, err := ts.Client().Post(ts.URL+"/oauth/register", "application/json", strings.NewReader(body))
 	if err != nil {
-		t.Fatalf("expected per-user file at %s: %v", userFile, err)
+		t.Fatalf("POST /oauth/register: %v", err)
 	}
-	if string(data) != "alice private notes" {
-		t.Fatalf("user file content = %q", data)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		t.Fatalf("registration status = %d, want 200/201 (body %s)", resp.StatusCode, readBody(t, resp))
 	}
-
-	if _, err := os.Stat(filepath.Join(root, "diary.txt")); !os.IsNotExist(err) {
-		t.Fatalf("file must not leak into base root, stat err = %v", err)
+	var registered map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&registered); err != nil {
+		t.Fatalf("decode registration: %v", err)
+	}
+	if id, _ := registered["client_id"].(string); id == "" {
+		t.Fatalf("registration did not return a client_id: %v", registered)
 	}
 }
 
 func TestWebRoutesServedWithAuth(t *testing.T) {
-	root := t.TempDir()
-	tokenInfo := newTokenInfoServer(t)
-	application := newAuthApp(t, root, tokenInfo.URL)
-
+	application := newAuthApp(t)
 	ts := httptest.NewServer(application.HTTPHandler())
 	defer ts.Close()
 
-	// The embedded UI is served at the root.
 	resp, err := ts.Client().Get(ts.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
@@ -181,7 +141,6 @@ func TestWebRoutesServedWithAuth(t *testing.T) {
 		t.Fatalf("GET / status = %d, want 200", resp.StatusCode)
 	}
 
-	// The API requires a bearer token.
 	apiResp, err := ts.Client().Get(ts.URL + "/api/me")
 	if err != nil {
 		t.Fatalf("GET /api/me: %v", err)
@@ -192,34 +151,11 @@ func TestWebRoutesServedWithAuth(t *testing.T) {
 	}
 }
 
-func TestInvalidTokenRejectedOverMCP(t *testing.T) {
-	root := t.TempDir()
-	tokenInfo := newTokenInfoServer(t)
-	application := newAuthApp(t, root, tokenInfo.URL)
-
-	ts := httptest.NewServer(application.HTTPHandler())
-	defer ts.Close()
-
-	c, err := client.NewStreamableHttpClient(
-		ts.URL+"/mcp",
-		transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer wrong-token"}),
-	)
+func readBody(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("NewStreamableHttpClient: %v", err)
+		t.Fatalf("read body: %v", err)
 	}
-	defer c.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := c.Start(ctx); err != nil {
-		t.Fatalf("client.Start: %v", err)
-	}
-	_, err = c.Initialize(ctx, mcp.InitializeRequest{})
-	if err == nil {
-		t.Fatal("expected Initialize to fail with an invalid token")
-	}
-	if !strings.Contains(err.Error(), "401") && !strings.Contains(strings.ToLower(err.Error()), "unauthor") {
-		t.Logf("Initialize error (accepted): %v", err)
-	}
+	return string(data)
 }

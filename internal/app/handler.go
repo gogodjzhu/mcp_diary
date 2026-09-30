@@ -8,37 +8,37 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/webui"
 )
 
-// HTTPHandler returns the HTTP handler tree: the protected resource metadata
-// endpoints, a health probe, the (optionally authenticated) MCP Streamable HTTP
-// endpoint, the web API and UI, and cross-cutting middleware.
+// HTTPHandler returns the HTTP handler tree: the OAuth authorization-server
+// endpoints and discovery documents, a health probe, the (optionally
+// authenticated) MCP Streamable HTTP endpoint, the web API and UI, and
+// cross-cutting middleware.
 func (a *App) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.Handle(a.cfg.EndpointPath, a.protectMCP(a.mcp.StreamableHandler()))
-	mux.HandleFunc("/healthz", a.handleHealthz)
-
-	if a.authGuard != nil {
-		a.mcp.RegisterMetadata(mux)
+	if a.oauth != nil {
+		a.oauth.RegisterRoutes(mux, a.cfg.EndpointPath)
 	}
 
+	mux.Handle(a.cfg.EndpointPath, a.protect(a.mcp.StreamableHandler()))
+	mux.HandleFunc("/healthz", a.handleHealthz)
+
 	if a.web != nil {
-		mux.Handle("/api/", a.web)
+		mux.Handle("/api/", a.protect(a.web))
 		mux.Handle("/", webui.Handler(a.cfg.Web.StaticDir))
 	}
 
 	return a.withAccessLog(a.withMaxBody(mux))
 }
 
-// protectMCP wraps the MCP endpoint with bearer-token authentication when
-// enabled.
-func (a *App) protectMCP(next http.Handler) http.Handler {
-	if a.authGuard == nil {
+// protect wraps a handler with OAuth bearer-token authentication when enabled.
+func (a *App) protect(next http.Handler) http.Handler {
+	if a.oauth == nil {
 		return next
 	}
-	return a.authGuard.Wrap(next)
+	return a.oauth.Protect(next)
 }
 
-func (a *App) handleHealthz(w http.ResponseWriter, r *http.Request) {
+func (a *App) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":       "ok",
@@ -49,7 +49,7 @@ func (a *App) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		"users_dir":    a.workspaces.UsersDir(),
 		"per_user":     a.workspaces.PerUser(),
 		"auth_enabled": a.cfg.Auth.Enabled,
-		"auth_issuer":  a.cfg.Auth.Issuer,
+		"auth_issuer":  a.cfg.Auth.PublicURL,
 		"web_enabled":  a.web != nil,
 		"tools":        a.ToolNames(),
 	})
