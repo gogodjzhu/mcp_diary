@@ -27,4 +27,4 @@ apt-get -y update
 apt-get install -y vim curl iputils-ping net-tools
 git config --global --add safe.directory '*'
 # opencode
-curl -fsSL https://opencode.ai/install | bash
+curl -fsSL https://opencode.ai/v2/install | bash
