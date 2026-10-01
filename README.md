@@ -74,7 +74,10 @@ make build
 - `POST /oauth/register`、`/oauth/authorize`、`/oauth/token`、`/oauth/callback` — 授权流程。
 - `GET  /` — 浏览器界面（内嵌的 Vue 前端）。
 - `GET  /api/me`、`/api/files`、`/api/file` — Web REST API（需 `Authorization: Bearer <token>`）。
-  仅在启用认证时注册，未启用认证时不会暴露。
+- `GET  /api/diary/entries`、`/api/diary/sessions` — 列出正式日记与草稿（含附件元数据）。
+- `POST /api/diary/attachments` — 上传图片/视频（multipart `file` + `session_id` 或 `entry_id`）。
+- `GET  /api/diary/attachments/{owner_id}/{attachment_id}` — 预览/播放附件（inline）。
+  以上 API 仅在启用认证时注册，未启用认证时不会暴露。
 
 ### 启用 OAuth 2.1（Google 联邦）
 
@@ -141,8 +144,12 @@ MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿�
 | `updateDiaryEntry` | 整体替换正式日记正文 | |
 | `listDiaryEntries` | 按业务日期分页列出正式日记 | ✅ |
 | `deleteDiaryEntry` | 永久删除正式日记（调用前需用户确认） | |
+| `attachDiaryMedia` | 把工作区内的图片/视频附加到草稿或正式日记 | |
+| `removeDiaryAttachment` | 删除日记附件及其本地文件 | |
 
 状态机：`draft -> committed` 或 `draft -> discarded`。终态不可回到草稿。同一用户同一 `diary_date` 只能有一篇正式日记。
+
+图片和视频作为附件保存在工作区 `.mcp-diary/attachments/<日记 ID>/` 下，元数据（安全文件名、相对路径、媒体类型、大小、所属日记）写入同一份 `diary.json`。允许 `jpg/jpeg/png/gif/webp` 图片（上限 10 MiB）和 `mp4/webm/mov` 视频（上限 30 MiB）；上传会校验扩展名、MIME 与文件头，并使用生成的安全文件名，避免路径穿越和覆盖。Web 界面按类型预览图片或用播放器播放视频。
 
 ## 文件系统工具
 

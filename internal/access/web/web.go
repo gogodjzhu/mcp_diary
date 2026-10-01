@@ -8,8 +8,10 @@ package web
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth"
+	"github.com/gogodjzhu/mcp-diary/internal/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/workspace"
 )
 
@@ -17,6 +19,8 @@ import (
 type Config struct {
 	// Workspaces resolves the sandboxed filesystem for the caller identity.
 	Workspaces *workspace.Manager
+	// Diary is the per-workspace diary store used by the journal UI.
+	Diary *diary.Service
 	// Logger receives debug logging.
 	Logger *slog.Logger
 }
@@ -40,13 +44,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch r.URL.Path {
-	case "/api/me":
+	switch {
+	case r.URL.Path == "/api/me":
 		h.handleMe(w, identity)
-	case "/api/files":
+	case r.URL.Path == "/api/files":
 		h.handleList(w, r)
-	case "/api/file":
+	case r.URL.Path == "/api/file":
 		h.handleRead(w, r)
+	case r.URL.Path == "/api/diary/entries":
+		h.handleDiaryEntries(w, r)
+	case r.URL.Path == "/api/diary/sessions":
+		h.handleDiarySessions(w, r)
+	case r.URL.Path == "/api/diary/attachments":
+		h.handleDiaryAttachments(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/diary/attachments/"):
+		h.handleDiaryAttachmentFile(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "unknown API endpoint")
 	}

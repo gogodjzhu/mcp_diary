@@ -99,6 +99,7 @@ func cloneSession(src *Session) *Session {
 		return nil
 	}
 	cp := *src
+	cp.Attachments = cloneAttachments(src.Attachments)
 	return &cp
 }
 
@@ -107,7 +108,22 @@ func cloneEntry(src *Entry) *Entry {
 		return nil
 	}
 	cp := *src
+	cp.Attachments = cloneAttachments(src.Attachments)
 	return &cp
+}
+
+func (s *Store) listSessions() []*Session {
+	out := make([]*Session, 0, len(s.data.Sessions))
+	for _, sess := range s.data.Sessions {
+		out = append(out, cloneSession(sess))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DiaryDate == out[j].DiaryDate {
+			return out[i].SessionID < out[j].SessionID
+		}
+		return out[i].DiaryDate < out[j].DiaryDate
+	})
+	return out
 }
 
 func (s *Store) listEntries(from, to string) []*Entry {

@@ -38,6 +38,8 @@ func All(workspaces tools.WorkspaceProvider, svc *diary.Service) []tools.Tool {
 		newUpdateDiaryEntry(workspaces, svc),
 		newListDiaryEntries(workspaces, svc),
 		newDeleteDiaryEntry(workspaces, svc),
+		newAttachDiaryMedia(workspaces, svc),
+		newRemoveDiaryAttachment(workspaces, svc),
 	}
 }
 

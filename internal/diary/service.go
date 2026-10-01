@@ -260,27 +260,34 @@ func (s *Service) CommitSession(workspaceRoot string, in CommitSessionIn) (any, 
 	}
 	now := st.now().In(s.loc)
 	entry := &Entry{
-		EntryID:   newID("de"),
-		DiaryDate: sess.DiaryDate,
-		Content:   sess.Content,
-		Status:    StatusCommitted,
-		Revision:  1,
-		CreatedAt: now,
-		UpdatedAt: now,
+		EntryID:     newID("de"),
+		DiaryDate:   sess.DiaryDate,
+		Content:     sess.Content,
+		Status:      StatusCommitted,
+		Revision:    1,
+		Attachments: cloneAttachments(sess.Attachments),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
+	moved, err := st.transferAttachmentDir(sess.SessionID, entry.EntryID, entry.Attachments)
+	if err != nil {
+		return nil, wrapInternal(err)
+	}
+	entry.Attachments = moved
 	st.data.Entries[entry.EntryID] = entry
 	st.data.DateEntries[entry.DiaryDate] = entry.EntryID
 	delete(st.data.Sessions, sess.SessionID)
 	delete(st.data.DateSessions, sess.DiaryDate)
 
 	out := map[string]any{
-		"entry_id":   entry.EntryID,
-		"session_id": sess.SessionID,
-		"diary_date": entry.DiaryDate,
-		"content":    entry.Content,
-		"status":     StatusCommitted,
-		"created_at": entry.CreatedAt,
-		"updated_at": entry.UpdatedAt,
+		"entry_id":    entry.EntryID,
+		"session_id":  sess.SessionID,
+		"diary_date":  entry.DiaryDate,
+		"content":     entry.Content,
+		"status":      StatusCommitted,
+		"attachments": cloneAttachments(entry.Attachments),
+		"created_at":  entry.CreatedAt,
+		"updated_at":  entry.UpdatedAt,
 	}
 	if err := remember(st, in.RequestID, out); err != nil {
 		return nil, err
@@ -316,16 +323,18 @@ func (s *Service) DiscardSession(workspaceRoot string, in DiscardSessionIn) (any
 		return nil, err
 	}
 	now := st.now().In(s.loc)
-	delete(st.data.Sessions, sess.SessionID)
+	sessionID := sess.SessionID
+	delete(st.data.Sessions, sessionID)
 	delete(st.data.DateSessions, sess.DiaryDate)
 	out := map[string]any{
-		"session_id": sess.SessionID,
+		"session_id": sessionID,
 		"status":     StatusDiscarded,
 		"updated_at": now,
 	}
 	if err := remember(st, in.RequestID, out); err != nil {
 		return nil, err
 	}
+	_ = st.removeAttachmentDir(sessionID)
 	return out, nil
 }
 
@@ -465,11 +474,12 @@ func (s *Service) ListEntries(workspaceRoot string, in ListEntriesIn) (any, erro
 	summaries := make([]map[string]any, 0, len(items))
 	for _, e := range items {
 		summaries = append(summaries, map[string]any{
-			"entry_id":   e.EntryID,
-			"diary_date": e.DiaryDate,
-			"content":    e.Content,
-			"created_at": e.CreatedAt,
-			"updated_at": e.UpdatedAt,
+			"entry_id":    e.EntryID,
+			"diary_date":  e.DiaryDate,
+			"content":     e.Content,
+			"attachments": cloneAttachments(e.Attachments),
+			"created_at":  e.CreatedAt,
+			"updated_at":  e.UpdatedAt,
 		})
 	}
 	out := map[string]any{
@@ -525,6 +535,7 @@ func (s *Service) DeleteEntry(workspaceRoot string, in DeleteEntryIn) (any, erro
 	if err := remember(st, in.RequestID, out); err != nil {
 		return nil, err
 	}
+	_ = st.removeAttachmentDir(in.EntryID)
 	return out, nil
 }
 
