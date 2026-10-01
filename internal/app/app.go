@@ -12,8 +12,10 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/access/mcp"
 	"github.com/gogodjzhu/mcp-diary/internal/access/web"
 	"github.com/gogodjzhu/mcp-diary/internal/config"
+	"github.com/gogodjzhu/mcp-diary/internal/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/oauthserver"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"
+	"github.com/gogodjzhu/mcp-diary/internal/tools/diarytools"
 	"github.com/gogodjzhu/mcp-diary/internal/tools/fstools"
 	"github.com/gogodjzhu/mcp-diary/internal/workspace"
 )
@@ -53,7 +55,10 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("open workspace: %w", err)
 	}
 
-	registry := tools.NewRegistry(fstools.All(workspaces)...)
+	diarySvc := diary.New(nil, nil)
+	registry := tools.NewRegistry()
+	registry.Add(diarytools.All(workspaces, diarySvc)...)
+	registry.Add(fstools.All(workspaces)...)
 
 	app := &App{
 		cfg:        cfg,

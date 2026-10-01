@@ -75,18 +75,19 @@ func instructions(workspaces *workspace.Manager) string {
 	if workspaces.ReadOnly() {
 		mode = "read-only"
 	}
+	diaryGuide := "Use the diary tools to record daily journals as plain text: createDiarySession, appendDiarySession, getDiarySession, updateDiarySession, then commitDiarySession only after the user confirms. Do not invent structured fields. After commit, use getDiaryEntry, listDiaryEntries, updateDiaryEntry, and deleteDiaryEntry. deleteDiaryEntry requires explicit user confirmation."
 	if workspaces.PerUser() {
 		return fmt.Sprintf(
-			"You are connected to a private, authenticated file workspace with %s access. "+
+			"You are connected to a private, authenticated diary and file workspace with %s access. "+
 				"The workspace belongs to the authenticated user and is fully isolated from other users. "+
-				"All paths are resolved inside it; attempts to escape are rejected.",
-			mode,
+				"All paths are resolved inside it; attempts to escape are rejected. %s",
+			mode, diaryGuide,
 		)
 	}
 	return fmt.Sprintf(
-		"You are connected to a file workspace rooted at %q with %s access. "+
+		"You are connected to a diary and file workspace rooted at %q with %s access. "+
 			"All paths are resolved inside this root; attempts to escape it are rejected. "+
-			"Use the filesystem tools to inspect, read and modify files.",
-		workspaces.Root(), mode,
+			"Use the filesystem tools to inspect, read and modify files. %s",
+		workspaces.Root(), mode, diaryGuide,
 	)
 }

@@ -13,3 +13,4 @@ web/.env.local
 
 # Local OAuth state written under a repo-root workspace
 /auth/
+.mcp-diary/
