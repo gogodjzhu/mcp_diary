@@ -1,7 +1,7 @@
 # mcp-diary
 
 基于 [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) 与 [cobra](https://github.com/spf13/cobra)
-构建的 **Streamable HTTP** MCP 服务端，核心能力是**安全地读写文件**。
+构建的 **Streamable HTTP** MCP 服务端，核心能力是**对话式日记存取**以及安全地读写文件。
 
 服务端将某个目录作为“工作区（workspace）”暴露给 MCP 客户端，所有文件操作都被限制在该目录内，
 彻底避免客户端读写宿主机上的任意文件。
@@ -29,8 +29,10 @@ internal/
   auth/                   请求身份（从 token 解析出的用户）
   oauthserver/            OAuth 2.1 授权服务器（Google 联邦、动态注册、文件存储）
   filesystem/             沙箱化文件服务（与协议解耦，可独立测试）
+  diary/                  纯文本日记存取（草稿会话 + 正式条目）
   workspace/              按用户解析隔离工作区
   tools/                  Tool 接口 + 注册表 + 结果辅助函数
+    diarytools/           日记 MCP 工具
     fstools/              文件系统相关工具实现
   access/                 接入层
     mcp/                  MCP Server 组装与 Streamable HTTP 传输
@@ -43,6 +45,7 @@ web/                      Vite + Vue 3 + TypeScript 前端源码
 分层原则：
 
 - `filesystem` 不依赖任何协议，纯业务能力，便于测试与复用。
+- `diary` 是按工作区隔离的纯文本日记存取（草稿会话 + 正式条目），不包含 AI 字段。
 - `oauthserver` 是授权服务器（动态注册、Google 联邦、自签 token）；`auth` 只描述请求身份，不感知工具。
 - `workspace` 根据请求身份解析出对应的沙箱文件系统。
 - `tools` 只负责把业务能力适配成 MCP 工具，运行时从上下文取工作区。
@@ -122,7 +125,26 @@ cp .env.example .env   # 填写 GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET、MCP_PU
 docker compose up --build -d
 ```
 
-## 工具列表
+## 日记工具（第一版）
+
+MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿由宿主 Agent 完成。用户身份由 OAuth 决定，工具参数不接受 `user_id`。
+
+| 工具 | 说明 | 只读 |
+| --- | --- | --- |
+| `createDiarySession` | 创建或恢复某业务日期的草稿 | |
+| `appendDiarySession` | 向草稿追加文本 | |
+| `getDiarySession` | 读取草稿 | ✅ |
+| `updateDiarySession` | 整体替换草稿正文 | |
+| `commitDiarySession` | 用户确认后提交为正式日记并删除草稿 | |
+| `discardDiarySession` | 放弃未提交草稿 | |
+| `getDiaryEntry` | 读取正式日记 | ✅ |
+| `updateDiaryEntry` | 整体替换正式日记正文 | |
+| `listDiaryEntries` | 按业务日期分页列出正式日记 | ✅ |
+| `deleteDiaryEntry` | 永久删除正式日记（调用前需用户确认） | |
+
+状态机：`draft -> committed` 或 `draft -> discarded`。终态不可回到草稿。同一用户同一 `diary_date` 只能有一篇正式日记。
+
+## 文件系统工具
 
 | 工具 | 说明 | 只读 |
 | --- | --- | --- |
