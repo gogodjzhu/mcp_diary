@@ -5,11 +5,11 @@ import (
 	"text/tabwriter"
 
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
-	"github.com/gogodjzhu/mcp-diary/internal/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"
 	"github.com/gogodjzhu/mcp-diary/internal/tools/diarytools"
 	"github.com/gogodjzhu/mcp-diary/internal/tools/fstools"
-	"github.com/gogodjzhu/mcp-diary/internal/workspace"
+	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 	"github.com/spf13/cobra"
 )
 

@@ -12,12 +12,12 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/access/mcp"
 	"github.com/gogodjzhu/mcp-diary/internal/access/web"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
-	"github.com/gogodjzhu/mcp-diary/internal/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"
 	"github.com/gogodjzhu/mcp-diary/internal/tools/diarytools"
 	"github.com/gogodjzhu/mcp-diary/internal/tools/fstools"
-	"github.com/gogodjzhu/mcp-diary/internal/workspace"
+	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
 // App is a fully assembled server exposing both the MCP and the web access

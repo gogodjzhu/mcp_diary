@@ -10,7 +10,7 @@ import (
 	"net/http"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
-	"github.com/gogodjzhu/mcp-diary/internal/workspace"
+	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
 // Config configures the web access layer.

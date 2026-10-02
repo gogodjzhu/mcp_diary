@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 
-	"github.com/gogodjzhu/mcp-diary/internal/filesystem"
+	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 )
 
 // WorkspaceProvider resolves the sandboxed filesystem a tool call may operate

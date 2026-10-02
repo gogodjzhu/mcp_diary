@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
-	"github.com/gogodjzhu/mcp-diary/internal/filesystem"
-	"github.com/gogodjzhu/mcp-diary/internal/workspace"
+	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
+	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
 func (h *Handler) handleMe(w http.ResponseWriter, identity *identity.Identity) {

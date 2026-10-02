@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
-	"github.com/gogodjzhu/mcp-diary/internal/filesystem"
+	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 )
 
 func TestAnonymousWorkspaceUsesRoot(t *testing.T) {

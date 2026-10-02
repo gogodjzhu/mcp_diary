@@ -3,7 +3,7 @@ package diarytools
 import (
 	"context"
 
-	"github.com/gogodjzhu/mcp-diary/internal/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )

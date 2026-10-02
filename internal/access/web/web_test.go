@@ -10,7 +10,7 @@ import (
 
 	"github.com/gogodjzhu/mcp-diary/internal/access/web"
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
-	"github.com/gogodjzhu/mcp-diary/internal/workspace"
+	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
 func newHandler(t *testing.T) (*web.Handler, string) {

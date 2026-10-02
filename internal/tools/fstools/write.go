@@ -3,7 +3,7 @@ package fstools
 import (
 	"context"
 
-	"github.com/gogodjzhu/mcp-diary/internal/filesystem"
+	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )
