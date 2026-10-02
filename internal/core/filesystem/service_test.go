@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -186,5 +187,97 @@ func TestSandboxRejectsSymlinkEscape(t *testing.T) {
 	// Writing through a symlinked directory must also be rejected.
 	if _, err := svc.Write(ctx, "escape/new.txt", "x", WriteOptions{}); !errors.Is(err, ErrOutsideRoot) {
 		t.Fatalf("Write via symlink err = %v, want ErrOutsideRoot", err)
+	}
+}
+
+func TestReadFileIgnoresReadLimit(t *testing.T) {
+	svc, _ := newTestService(t, false)
+	ctx := context.Background()
+
+	content := strings.Repeat("x", 64) // twice the 16-byte MaxReadBytes of the test service
+	if _, err := svc.Write(ctx, "big.txt", content, WriteOptions{}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// Read clamps to MaxReadBytes and reports truncation; ReadFile ignores the limit.
+	limited, err := svc.Read(ctx, "big.txt", 0, 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(limited.Content) != 16 || !limited.Truncated {
+		t.Fatalf("Read returned %d bytes truncated=%v, want 16/truncated", len(limited.Content), limited.Truncated)
+	}
+
+	b, err := svc.ReadFile(ctx, "big.txt")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(b) != content {
+		t.Fatalf("ReadFile returned %d bytes, want %d", len(b), len(content))
+	}
+
+	if _, err := svc.ReadFile(ctx, "missing.txt"); err == nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ReadFile(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestWriteAtomic(t *testing.T) {
+	svc, root := newTestService(t, false)
+	ctx := context.Background()
+
+	res, err := svc.WriteAtomic(ctx, "nested/store.json", `{"v":1}`, WriteOptions{CreateDirs: true, Mode: 0o600})
+	if err != nil {
+		t.Fatalf("WriteAtomic: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("Created = false, want true")
+	}
+
+	b, err := os.ReadFile(filepath.Join(root, "nested", "store.json"))
+	if err != nil || string(b) != `{"v":1}` {
+		t.Fatalf("on-disk = %q err = %v", b, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "nested", "store.json.tmp")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temp file left behind: %v", err)
+	}
+
+	// Replace is atomic and preserves content integrity.
+	if _, err := svc.WriteAtomic(ctx, "nested/store.json", `{"v":2}`, WriteOptions{Mode: 0o600}); err != nil {
+		t.Fatalf("WriteAtomic replace: %v", err)
+	}
+	b, _ = os.ReadFile(filepath.Join(root, "nested", "store.json"))
+	if string(b) != `{"v":2}` {
+		t.Fatalf("after replace = %q", b)
+	}
+}
+
+func TestWriteAtomicRefusesSymlinkedTemp(t *testing.T) {
+	svc, root := newTestService(t, false)
+	ctx := context.Background()
+
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "data", "store.json.tmp")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := svc.WriteAtomic(ctx, "data/store.json", "x", WriteOptions{}); err == nil || !errors.Is(err, ErrOutsideRoot) {
+		t.Fatalf("WriteAtomic err = %v, want ErrOutsideRoot", err)
+	}
+	b, err := os.ReadFile(filepath.Join(outside, "secret.txt"))
+	if err != nil || string(b) != "secret" {
+		t.Fatalf("outside file was modified: %q %v", b, err)
+	}
+}
+
+func TestWriteAtomicRespectsReadOnly(t *testing.T) {
+	svc, _ := newTestService(t, true)
+	if _, err := svc.WriteAtomic(context.Background(), "x.txt", "y", WriteOptions{}); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("err = %v, want ErrReadOnly", err)
 	}
 }

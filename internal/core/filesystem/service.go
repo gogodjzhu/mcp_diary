@@ -169,6 +169,78 @@ type WriteResult struct {
 	Created bool   `json:"created"`
 }
 
+// ReadFile returns the entire content of a file, ignoring the MaxReadBytes
+// limit. It exists for server-side persistence (such as the diary store);
+// client-facing reads must go through Read, which enforces the limit.
+func (s *Service) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	abs, err := s.resolve(path)
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := os.ReadFile(abs)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
+		}
+		return nil, err
+	}
+	return b, nil
+}
+
+// WriteAtomic writes content by creating a temporary file next to the target
+// and renaming it onto the target, so readers never observe a partially
+// written file. It is intended for server-side persistence; client-facing
+// writes should use Write.
+func (s *Service) WriteAtomic(ctx context.Context, path, content string, opts WriteOptions) (*WriteResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.readOnly {
+		return nil, ErrReadOnly
+	}
+
+	abs, err := s.resolve(path)
+	if err != nil {
+		return nil, err
+	}
+	if abs == s.root {
+		return nil, fmt.Errorf("%w: %s", ErrIsDirectory, path)
+	}
+	if opts.Mode == 0 {
+		opts.Mode = 0o644
+	}
+	if opts.CreateDirs {
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return nil, err
+		}
+	}
+
+	_, statErr := os.Stat(abs)
+	exists := statErr == nil
+
+	// Refuse to follow a symlink planted at the temporary path: writing
+	// through it could escape the sandbox.
+	tmp := abs + ".tmp"
+	if tmpInfo, err := os.Lstat(tmp); err == nil && tmpInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: %s", ErrOutsideRoot, path+".tmp")
+	}
+
+	if err := os.WriteFile(tmp, []byte(content), opts.Mode); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp, abs); err != nil {
+		_ = os.Remove(tmp)
+		return nil, err
+	}
+
+	return &WriteResult{Path: s.rel(abs), Bytes: len(content), Created: !exists}, nil
+}
+
 // Write creates or overwrites a file with the given content.
 func (s *Service) Write(ctx context.Context, path, content string, opts WriteOptions) (*WriteResult, error) {
 	if err := ctx.Err(); err != nil {
