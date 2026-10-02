@@ -1,8 +1,8 @@
-// Package web is the web access layer: a small REST API over the same
-// sandboxed, per-user filesystem the MCP tools use. Authentication is applied
-// by the assembly root (the shared OAuth middleware), which injects the
-// resolved identity into the request context; the handlers here only read it so
-// the workspace manager can resolve the right sandbox.
+// Package httpapi is the web access layer: a small REST API for the browser
+// UI. It currently only reports the authenticated identity; the diary domain is
+// exposed through the MCP tools. Authentication is applied by the assembly root
+// (the shared OAuth middleware), which injects the resolved identity into the
+// request context; the handlers here only read it.
 package httpapi
 
 import (
@@ -10,13 +10,10 @@ import (
 	"net/http"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
-	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
 // Config configures the web access layer.
 type Config struct {
-	// Workspaces resolves the sandboxed filesystem for the caller identity.
-	Workspaces *workspace.Manager
 	// Logger receives debug logging.
 	Logger *slog.Logger
 }
@@ -34,7 +31,7 @@ func New(cfg Config) *Handler { return &Handler{cfg: cfg} }
 // and dispatches to the matching endpoint. Unknown endpoints return a JSON 404
 // so API typos never fall through to the single-page application.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	identity, ok := identity.IdentityFrom(r.Context())
+	id, ok := identity.IdentityFrom(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid_request", "missing authenticated identity")
 		return
@@ -42,11 +39,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.URL.Path {
 	case "/api/me":
-		h.handleMe(w, identity)
-	case "/api/files":
-		h.handleList(w, r)
-	case "/api/file":
-		h.handleRead(w, r)
+		h.handleMe(w, id)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "unknown API endpoint")
 	}

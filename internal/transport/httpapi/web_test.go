@@ -4,46 +4,22 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
-	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
 )
 
-func newHandler(t *testing.T) (*httpapi.Handler, string) {
-	t.Helper()
-
-	root := t.TempDir()
-	workspaces, err := workspace.New(workspace.Config{
-		Root:         root,
-		UsersDir:     "users",
-		PerUser:      true,
-		MaxReadBytes: 1 << 20,
-	})
-	if err != nil {
-		t.Fatalf("workspace.New: %v", err)
-	}
-
-	userDir := filepath.Join(root, "users", "alice@example.com")
-	if err := os.MkdirAll(userDir, 0o700); err != nil {
-		t.Fatalf("mkdir user dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(userDir, "diary.txt"), []byte("hello diary"), 0o644); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
-
-	return httpapi.New(httpapi.Config{Workspaces: workspaces}), root
+func newHandler() *httpapi.Handler {
+	return httpapi.New(httpapi.Config{})
 }
 
 func doRequest(t *testing.T, h http.Handler, method, target, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, target, nil)
 	if token == "good-token" {
-		ident := &identity.Identity{Subject: "google-sub-1", Email: "alice@example.com", Name: "Alice"}
-		req = req.WithContext(identity.WithIdentity(req.Context(), ident))
+		id := &identity.Identity{Subject: "google-sub-1", Email: "alice@example.com", Name: "Alice"}
+		req = req.WithContext(identity.WithIdentity(req.Context(), id))
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -51,7 +27,7 @@ func doRequest(t *testing.T, h http.Handler, method, target, token string) *http
 }
 
 func TestMe(t *testing.T) {
-	h, _ := newHandler(t)
+	h := newHandler()
 
 	rec := doRequest(t, h, http.MethodGet, "/api/me", "good-token")
 	if rec.Code != http.StatusOK {
@@ -65,75 +41,22 @@ func TestMe(t *testing.T) {
 	if body["email"] != "alice@example.com" {
 		t.Fatalf("email = %v", body["email"])
 	}
+	if body["username"] != "alice@example.com" {
+		t.Fatalf("username = %v", body["username"])
+	}
 }
 
 func TestMeRequiresToken(t *testing.T) {
-	h, _ := newHandler(t)
+	h := newHandler()
 
 	rec := doRequest(t, h, http.MethodGet, "/api/me", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-
-	rec = doRequest(t, h, http.MethodGet, "/api/me", "wrong-token")
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
-	}
-}
-
-func TestListUsesPerUserWorkspace(t *testing.T) {
-	h, _ := newHandler(t)
-
-	rec := doRequest(t, h, http.MethodGet, "/api/files", "good-token")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
-	}
-
-	var body struct {
-		Count   int `json:"count"`
-		Entries []struct {
-			Name string `json:"name"`
-		} `json:"entries"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body.Count != 1 || body.Entries[0].Name != "diary.txt" {
-		t.Fatalf("unexpected listing: %+v", body)
-	}
-}
-
-func TestReadFile(t *testing.T) {
-	h, _ := newHandler(t)
-
-	rec := doRequest(t, h, http.MethodGet, "/api/file?path=diary.txt", "good-token")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
-	}
-
-	var body struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body.Content != "hello diary" {
-		t.Fatalf("content = %q", body.Content)
-	}
-}
-
-func TestReadMissingFileReturns404(t *testing.T) {
-	h, _ := newHandler(t)
-
-	rec := doRequest(t, h, http.MethodGet, "/api/file?path=nope.txt", "good-token")
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (body %s)", rec.Code, rec.Body.String())
-	}
 }
 
 func TestUnknownEndpointReturnsJSON404(t *testing.T) {
-	h, _ := newHandler(t)
+	h := newHandler()
 
 	rec := doRequest(t, h, http.MethodGet, "/api/nope", "good-token")
 	if rec.Code != http.StatusNotFound {
@@ -144,11 +67,13 @@ func TestUnknownEndpointReturnsJSON404(t *testing.T) {
 	}
 }
 
-func TestEscapeRejected(t *testing.T) {
-	h, _ := newHandler(t)
+func TestFileEndpointsRemoved(t *testing.T) {
+	h := newHandler()
 
-	rec := doRequest(t, h, http.MethodGet, "/api/file?path=../../etc/passwd", "good-token")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
+	for _, path := range []string{"/api/files", "/api/file?path=diary.txt"} {
+		rec := doRequest(t, h, http.MethodGet, path, "good-token")
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, rec.Code)
+		}
 	}
 }

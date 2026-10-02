@@ -78,8 +78,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	switch {
 	case cfg.Web.Enabled && cfg.Auth.Enabled:
 		app.web = httpapi.New(httpapi.Config{
-			Workspaces: workspaces,
-			Logger:     logger,
+			Logger: logger,
 		})
 	case cfg.Web.Enabled:
 		logger.Warn("web UI is enabled but authentication is disabled; web routes are not registered")
