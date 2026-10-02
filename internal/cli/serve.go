@@ -15,11 +15,18 @@ func newServeCommand(version string, logLevel, logFormat *string) *cobra.Command
 	cfg := config.Default()
 	cfg.Version = version
 	transport := string(cfg.Transport)
+	var envFile string
 
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the MCP server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if envFile != "" {
+				if err := applyEnvFile(envFile); err != nil {
+					return err
+				}
+			}
+			applyEnvFallbacks(cmd, &cfg)
 			cfg.Transport = config.Transport(transport)
 			cfg.LogLevel = *logLevel
 			cfg.LogFormat = *logFormat
@@ -52,6 +59,7 @@ func newServeCommand(version string, logLevel, logFormat *string) *cobra.Command
 	flags.BoolVar(&cfg.StreamingDisabled, "disable-streaming", cfg.StreamingDisabled, "disable server-sent streaming and answer GET with 405")
 	flags.Int64Var(&cfg.MaxReadBytes, "max-read-bytes", cfg.MaxReadBytes, "maximum bytes returned by a single read")
 	flags.Int64Var(&cfg.MaxRequestBodyBytes, "max-request-bytes", cfg.MaxRequestBodyBytes, "maximum HTTP request body size in bytes")
+	flags.StringVar(&envFile, "env-file", "", "load KEY=VALUE pairs from this .env file first (never overrides existing environment variables)")
 
 	flags.BoolVar(&cfg.Auth.Enabled, "auth-enabled", cfg.Auth.Enabled, "require OAuth 2.1 authentication (mcp-diary acts as its own authorization server)")
 	flags.StringVar(&cfg.Auth.PublicURL, "auth-public-url", cfg.Auth.PublicURL, "externally reachable base URL, e.g. https://mcp.example.com (OAuth issuer)")

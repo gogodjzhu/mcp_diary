@@ -93,6 +93,17 @@ make build
   --auth-encryption-key "$(openssl rand -base64 32)"
 ```
 
+也可以把这些值写进 `.env`（参考 `.env.example`），让命令行保持精简：
+
+```bash
+./bin/mcp-diary serve --root /data --auth-enabled --env-file=.env
+```
+
+`--env-file` 读取 `KEY=VALUE`（支持 `#` 注释、引号与 `export` 前缀），不会覆盖已导出的环境变量；
+认证参数的回退顺序为 **显式 flag > 环境变量 > 内置默认值**，对应的变量名：
+`MCP_PUBLIC_URL`、`GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`AUTH_ENCRYPTION_KEY`。
+VS Code 里直接 F5（`Serve (Web + MCP)`）就是用 `--env-file` 加载仓库根目录的 `.env`。
+
 只需要一个 Google **Web application** 客户端，重定向 URI 固定为
 `<auth-public-url>/oauth/callback`。secret 留在服务端，不发给任何客户端。
 
@@ -197,6 +208,7 @@ mcp-diary serve [flags]
   --disable-streaming       禁用 SSE 流式响应，GET 返回 405
   --max-read-bytes int      单次读取返回的最大字节数（默认 1048576）
   --max-request-bytes int   HTTP 请求体上限（默认 33554432）
+  --env-file string         先从该 .env 文件加载 KEY=VALUE（不覆盖已导出的环境变量）
 
 认证参数（详见 docs/auth.md）：
   --auth-enabled                          启用 OAuth 2.1（本服务作为授权服务器）

@@ -7,7 +7,14 @@
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/mcp-diary",
-      "args": ["serve", "--root", "${workspaceFolder}"],
+      "args": [
+        "serve",
+        "--root", "${workspaceFolder}",
+        "--addr=:8080",
+        "--auth-enabled",
+        "--web-enabled",
+        "--env-file=${workspaceFolder}/.env"
+      ],
       "cwd": "${workspaceFolder}"
     },
     {

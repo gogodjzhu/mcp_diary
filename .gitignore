@@ -8,6 +8,7 @@ web/dist/
 web/.env.local
 
 # Local secrets and stray artifacts — never commit these
+/.env
 /Identify
 /image.png
 
