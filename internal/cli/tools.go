@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"text/tabwriter"
 
-	"github.com/gogodjzhu/mcp-diary/internal/config"
+	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"
 	"github.com/gogodjzhu/mcp-diary/internal/tools/diarytools"

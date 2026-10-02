@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/gogodjzhu/mcp-diary/internal/config"
+	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 )
 
 // Run starts the server over the configured transport and blocks until the

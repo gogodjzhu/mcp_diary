@@ -6,8 +6,8 @@ import (
 	"syscall"
 
 	"github.com/gogodjzhu/mcp-diary/internal/app"
-	"github.com/gogodjzhu/mcp-diary/internal/config"
-	"github.com/gogodjzhu/mcp-diary/internal/logging"
+	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
+	"github.com/gogodjzhu/mcp-diary/internal/platform/logging"
 	"github.com/spf13/cobra"
 )
 

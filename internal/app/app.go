@@ -11,7 +11,7 @@ import (
 
 	"github.com/gogodjzhu/mcp-diary/internal/access/mcp"
 	"github.com/gogodjzhu/mcp-diary/internal/access/web"
-	"github.com/gogodjzhu/mcp-diary/internal/config"
+	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/oauthserver"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"

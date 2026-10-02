@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/gogodjzhu/mcp-diary/internal/config"
+	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"
 	"github.com/gogodjzhu/mcp-diary/internal/workspace"
 	"github.com/mark3labs/mcp-go/server"

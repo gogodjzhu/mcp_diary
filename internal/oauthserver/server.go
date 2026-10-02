@@ -23,7 +23,7 @@ import (
 	"github.com/giantswarm/mcp-oauth/storage"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth"
-	"github.com/gogodjzhu/mcp-diary/internal/config"
+	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 )
 
 // WebClientID is the fixed client id of the first-party browser UI. It is
