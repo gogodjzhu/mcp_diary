@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/gogodjzhu/mcp-diary/internal/auth"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
 	"github.com/gogodjzhu/mcp-diary/internal/workspace"
 )
 
@@ -34,7 +34,7 @@ func New(cfg Config) *Handler { return &Handler{cfg: cfg} }
 // and dispatches to the matching endpoint. Unknown endpoints return a JSON 404
 // so API typos never fall through to the single-page application.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	identity, ok := auth.IdentityFrom(r.Context())
+	identity, ok := identity.IdentityFrom(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid_request", "missing authenticated identity")
 		return

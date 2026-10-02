@@ -1,7 +1,7 @@
 // Package auth describes the authenticated principal carried on a request.
-// Token verification lives in the authorization server (internal/oauthserver);
+// Token verification lives in the authorization server (internal/auth/oauth);
 // this package only holds the identity the workspace layer reads from context.
-package auth
+package identity
 
 import "strings"
 

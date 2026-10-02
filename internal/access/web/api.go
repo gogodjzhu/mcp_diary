@@ -7,12 +7,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gogodjzhu/mcp-diary/internal/auth"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
 	"github.com/gogodjzhu/mcp-diary/internal/filesystem"
 	"github.com/gogodjzhu/mcp-diary/internal/workspace"
 )
 
-func (h *Handler) handleMe(w http.ResponseWriter, identity *auth.Identity) {
+func (h *Handler) handleMe(w http.ResponseWriter, identity *identity.Identity) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"subject":  identity.Subject,
 		"email":    identity.Email,

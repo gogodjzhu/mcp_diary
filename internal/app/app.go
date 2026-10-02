@@ -13,7 +13,7 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/access/web"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/diary"
-	"github.com/gogodjzhu/mcp-diary/internal/oauthserver"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
 	"github.com/gogodjzhu/mcp-diary/internal/tools"
 	"github.com/gogodjzhu/mcp-diary/internal/tools/diarytools"
 	"github.com/gogodjzhu/mcp-diary/internal/tools/fstools"
@@ -29,7 +29,7 @@ type App struct {
 	registry   *tools.Registry
 
 	mcp   *mcp.Server
-	oauth *oauthserver.OAuth
+	oauth *oauth.OAuth
 	web   http.Handler
 }
 
@@ -70,7 +70,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 
 	if cfg.Auth.Enabled {
 		storePath := filepath.Join(resolveDir(cfg.Root, cfg.Auth.StoreDir), "oauth.json")
-		oauthSrv, err := oauthserver.New(cfg.Auth, cfg.EndpointPath, storePath, logger)
+		oauthSrv, err := oauth.New(cfg.Auth, cfg.EndpointPath, storePath, logger)
 		if err != nil {
 			return nil, fmt.Errorf("configure authorization server: %w", err)
 		}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/gogodjzhu/mcp-diary/internal/auth"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -21,8 +21,8 @@ func (s *Server) StreamableHandler() http.Handler {
 		server.WithDisableLocalhostProtection(s.cfg.AllowRemoteClients),
 		server.WithStreamableHTTPLogger(s.logger),
 		server.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
-			if identity, ok := auth.IdentityFrom(r.Context()); ok {
-				return auth.WithIdentity(ctx, identity)
+			if id, ok := identity.IdentityFrom(r.Context()); ok {
+				return identity.WithIdentity(ctx, id)
 			}
 			return ctx
 		}),

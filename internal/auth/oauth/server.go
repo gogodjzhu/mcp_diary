@@ -3,7 +3,7 @@
 // to the browser UI, federating identity to Google on the server side. Clients
 // obtain a client id automatically through dynamic client registration, so
 // nothing but the server URL needs to be distributed.
-package oauthserver
+package oauth
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 	"github.com/giantswarm/mcp-oauth/security"
 	"github.com/giantswarm/mcp-oauth/storage"
 
-	"github.com/gogodjzhu/mcp-diary/internal/auth"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 )
 
@@ -135,13 +135,13 @@ func (o *OAuth) Protect(next http.Handler) http.Handler {
 			return
 		}
 		scopes, _ := oauthhandler.ScopesFromContext(r.Context())
-		identity := &auth.Identity{
+		ident := &identity.Identity{
 			Subject: userInfo.ID,
 			Email:   userInfo.Email,
 			Name:    userInfo.Name,
 			Scopes:  scopes,
 		}
-		next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), identity)))
+		next.ServeHTTP(w, r.WithContext(identity.WithIdentity(r.Context(), ident)))
 	}))
 }
 

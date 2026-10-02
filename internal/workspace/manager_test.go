@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gogodjzhu/mcp-diary/internal/auth"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
 	"github.com/gogodjzhu/mcp-diary/internal/filesystem"
 )
 
@@ -34,8 +34,8 @@ func TestPerUserWorkspaceIsolation(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	aliceCtx := auth.WithIdentity(context.Background(), &auth.Identity{Email: "alice@example.com", Subject: "1"})
-	bobCtx := auth.WithIdentity(context.Background(), &auth.Identity{Email: "bob@example.com", Subject: "2"})
+	aliceCtx := identity.WithIdentity(context.Background(), &identity.Identity{Email: "alice@example.com", Subject: "1"})
+	bobCtx := identity.WithIdentity(context.Background(), &identity.Identity{Email: "bob@example.com", Subject: "2"})
 
 	aliceFS, err := manager.Filesystem(aliceCtx)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestUserDirectoryPermissions(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Email: "alice@example.com"})
+	ctx := identity.WithIdentity(context.Background(), &identity.Identity{Email: "alice@example.com"})
 	if _, err := manager.Filesystem(ctx); err != nil {
 		t.Fatalf("Filesystem: %v", err)
 	}

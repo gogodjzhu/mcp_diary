@@ -1,4 +1,4 @@
-package oauthserver
+package oauth
 
 import (
 	"context"

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/gogodjzhu/mcp-diary/internal/access/web"
-	"github.com/gogodjzhu/mcp-diary/internal/auth"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
 	"github.com/gogodjzhu/mcp-diary/internal/workspace"
 )
 
@@ -42,8 +42,8 @@ func doRequest(t *testing.T, h http.Handler, method, target, token string) *http
 	t.Helper()
 	req := httptest.NewRequest(method, target, nil)
 	if token == "good-token" {
-		identity := &auth.Identity{Subject: "google-sub-1", Email: "alice@example.com", Name: "Alice"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+		ident := &identity.Identity{Subject: "google-sub-1", Email: "alice@example.com", Name: "Alice"}
+		req = req.WithContext(identity.WithIdentity(req.Context(), ident))
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

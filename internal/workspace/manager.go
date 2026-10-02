@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gogodjzhu/mcp-diary/internal/auth"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
 	"github.com/gogodjzhu/mcp-diary/internal/filesystem"
 )
 
@@ -87,7 +87,7 @@ func (m *Manager) Filesystem(ctx context.Context) (*filesystem.Service, error) {
 		return m.anonymous, nil
 	}
 
-	identity, ok := auth.IdentityFrom(ctx)
+	identity, ok := identity.IdentityFrom(ctx)
 	if !ok {
 		return nil, ErrUnauthenticated
 	}
@@ -95,7 +95,7 @@ func (m *Manager) Filesystem(ctx context.Context) (*filesystem.Service, error) {
 	return m.serviceFor(identity)
 }
 
-func (m *Manager) serviceFor(identity *auth.Identity) (*filesystem.Service, error) {
+func (m *Manager) serviceFor(identity *identity.Identity) (*filesystem.Service, error) {
 	slug := identity.Slug()
 
 	m.mu.Lock()
