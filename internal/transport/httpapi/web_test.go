@@ -1,4 +1,4 @@
-package web_test
+package httpapi_test
 
 import (
 	"encoding/json"
@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gogodjzhu/mcp-diary/internal/access/web"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
-func newHandler(t *testing.T) (*web.Handler, string) {
+func newHandler(t *testing.T) (*httpapi.Handler, string) {
 	t.Helper()
 
 	root := t.TempDir()
@@ -35,7 +35,7 @@ func newHandler(t *testing.T) (*web.Handler, string) {
 		t.Fatalf("seed file: %v", err)
 	}
 
-	return web.New(web.Config{Workspaces: workspaces}), root
+	return httpapi.New(httpapi.Config{Workspaces: workspaces}), root
 }
 
 func doRequest(t *testing.T, h http.Handler, method, target, token string) *httptest.ResponseRecorder {

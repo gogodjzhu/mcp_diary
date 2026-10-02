@@ -9,14 +9,14 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/gogodjzhu/mcp-diary/internal/access/mcp"
-	"github.com/gogodjzhu/mcp-diary/internal/access/web"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
-	"github.com/gogodjzhu/mcp-diary/internal/tools"
-	"github.com/gogodjzhu/mcp-diary/internal/tools/diarytools"
-	"github.com/gogodjzhu/mcp-diary/internal/tools/fstools"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
+	diarytools "github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools/fs"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
@@ -58,7 +58,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	diarySvc := diary.New(nil, nil)
 	registry := tools.NewRegistry()
 	registry.Add(diarytools.All(workspaces, diarySvc)...)
-	registry.Add(fstools.All(workspaces)...)
+	registry.Add(fs.All(workspaces)...)
 
 	app := &App{
 		cfg:        cfg,
@@ -79,7 +79,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 
 	switch {
 	case cfg.Web.Enabled && cfg.Auth.Enabled:
-		app.web = web.New(web.Config{
+		app.web = httpapi.New(httpapi.Config{
 			Workspaces: workspaces,
 			Logger:     logger,
 		})

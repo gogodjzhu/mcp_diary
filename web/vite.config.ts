@@ -1,13 +1,13 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// The build output is embedded into the Go binary by internal/webui, so the
+// The build output is embedded into the Go binary by internal/transport/webui, so the
 // dist directory lives inside the Go module tree.
 export default defineConfig({
   plugins: [vue()],
   base: '/',
   build: {
-    outDir: '../internal/webui/dist',
+    outDir: '../internal/transport/webui/dist',
     emptyOutDir: true,
     // Stable file names keep the committed embed output diff-friendly.
     rollupOptions: {

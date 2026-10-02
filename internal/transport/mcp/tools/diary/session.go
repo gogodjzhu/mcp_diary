@@ -1,14 +1,14 @@
-package diarytools
+package diary
 
 import (
 	"context"
 
-	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
-	"github.com/gogodjzhu/mcp-diary/internal/tools"
+	corediary "github.com/gogodjzhu/mcp-diary/internal/core/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func newCreateDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newCreateDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "createDiarySession",
 		definition: mcp.NewTool(
@@ -29,7 +29,7 @@ func newCreateDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servic
 			if err != nil {
 				return nil, err
 			}
-			return svc.CreateSession(root, diary.CreateSessionIn{
+			return svc.CreateSession(root, corediary.CreateSessionIn{
 				RequestID: requestID,
 				DiaryDate: optionalString(request, "diary_date"),
 			})
@@ -37,7 +37,7 @@ func newCreateDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servic
 	}
 }
 
-func newAppendDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newAppendDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "appendDiarySession",
 		definition: mcp.NewTool(
@@ -72,7 +72,7 @@ func newAppendDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servic
 			if err != nil {
 				return nil, err
 			}
-			return svc.AppendSession(root, diary.AppendSessionIn{
+			return svc.AppendSession(root, corediary.AppendSessionIn{
 				RequestID:        requestID,
 				SessionID:        sessionID,
 				ExpectedRevision: rev,
@@ -82,7 +82,7 @@ func newAppendDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servic
 	}
 }
 
-func newGetDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newGetDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "getDiarySession",
 		definition: mcp.NewTool(
@@ -105,7 +105,7 @@ func newGetDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Service) 
 			if err != nil {
 				return nil, argError("session_id is required")
 			}
-			return svc.GetSession(root, diary.GetSessionIn{
+			return svc.GetSession(root, corediary.GetSessionIn{
 				RequestID: requestID,
 				SessionID: sessionID,
 			})
@@ -113,7 +113,7 @@ func newGetDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Service) 
 	}
 }
 
-func newUpdateDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newUpdateDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "updateDiarySession",
 		definition: mcp.NewTool(
@@ -148,7 +148,7 @@ func newUpdateDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servic
 			if err != nil {
 				return nil, err
 			}
-			return svc.UpdateSession(root, diary.UpdateSessionIn{
+			return svc.UpdateSession(root, corediary.UpdateSessionIn{
 				RequestID:        requestID,
 				SessionID:        sessionID,
 				ExpectedRevision: rev,
@@ -158,7 +158,7 @@ func newUpdateDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servic
 	}
 }
 
-func newCommitDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newCommitDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "commitDiarySession",
 		definition: mcp.NewTool(
@@ -189,7 +189,7 @@ func newCommitDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servic
 			if err != nil {
 				return nil, err
 			}
-			return svc.CommitSession(root, diary.CommitSessionIn{
+			return svc.CommitSession(root, corediary.CommitSessionIn{
 				RequestID:        requestID,
 				SessionID:        sessionID,
 				ExpectedRevision: rev,
@@ -198,7 +198,7 @@ func newCommitDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servic
 	}
 }
 
-func newDiscardDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newDiscardDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "discardDiarySession",
 		definition: mcp.NewTool(
@@ -229,7 +229,7 @@ func newDiscardDiarySession(workspaces tools.WorkspaceProvider, svc *diary.Servi
 			if err != nil {
 				return nil, err
 			}
-			return svc.DiscardSession(root, diary.DiscardSessionIn{
+			return svc.DiscardSession(root, corediary.DiscardSessionIn{
 				RequestID:        requestID,
 				SessionID:        sessionID,
 				ExpectedRevision: rev,

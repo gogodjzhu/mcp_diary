@@ -24,7 +24,7 @@ build-go:
 web-install:
 	cd $(WEB_DIR) && npm install
 
-## web-build: build the frontend into internal/webui/dist
+## web-build: build the frontend into internal/transport/webui/dist
 web-build: web-install
 	cd $(WEB_DIR) && npm run build
 

@@ -1,9 +1,9 @@
-package fstools
+package fs
 
 import (
 	"context"
 
-	"github.com/gogodjzhu/mcp-diary/internal/tools"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 

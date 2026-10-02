@@ -10,7 +10,7 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 
 COPY web/ ./
-# Writes the production build into /src/internal/webui/dist.
+# Writes the production build into /src/internal/transport/webui/dist.
 RUN npm run build
 
 # ---- go build stage ----------------------------------------------------------
@@ -24,7 +24,7 @@ RUN go mod download
 
 COPY . .
 # Use the freshly built frontend instead of the committed embed output.
-COPY --from=web /src/internal/webui/dist ./internal/webui/dist
+COPY --from=web /src/internal/transport/webui/dist ./internal/webui/dist
 
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build \

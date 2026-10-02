@@ -1,8 +1,8 @@
 // Package fstools exposes the sandboxed filesystem as a set of MCP tools.
-package fstools
+package fs
 
 import (
-	"github.com/gogodjzhu/mcp-diary/internal/tools"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 )
 
 // All returns every filesystem tool bound to the supplied workspace provider.

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gogodjzhu/mcp-diary/internal/webui"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/webui"
 )
 
 // HTTPHandler returns the HTTP handler tree: the OAuth authorization-server

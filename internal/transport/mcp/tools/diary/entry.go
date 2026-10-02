@@ -1,14 +1,14 @@
-package diarytools
+package diary
 
 import (
 	"context"
 
-	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
-	"github.com/gogodjzhu/mcp-diary/internal/tools"
+	corediary "github.com/gogodjzhu/mcp-diary/internal/core/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func newGetDiaryEntry(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newGetDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "getDiaryEntry",
 		definition: mcp.NewTool(
@@ -31,7 +31,7 @@ func newGetDiaryEntry(workspaces tools.WorkspaceProvider, svc *diary.Service) to
 			if err != nil {
 				return nil, argError("entry_id is required")
 			}
-			return svc.GetEntry(root, diary.GetEntryIn{
+			return svc.GetEntry(root, corediary.GetEntryIn{
 				RequestID: requestID,
 				EntryID:   entryID,
 			})
@@ -39,7 +39,7 @@ func newGetDiaryEntry(workspaces tools.WorkspaceProvider, svc *diary.Service) to
 	}
 }
 
-func newUpdateDiaryEntry(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newUpdateDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "updateDiaryEntry",
 		definition: mcp.NewTool(
@@ -74,7 +74,7 @@ func newUpdateDiaryEntry(workspaces tools.WorkspaceProvider, svc *diary.Service)
 			if err != nil {
 				return nil, err
 			}
-			return svc.UpdateEntry(root, diary.UpdateEntryIn{
+			return svc.UpdateEntry(root, corediary.UpdateEntryIn{
 				RequestID:        requestID,
 				EntryID:          entryID,
 				ExpectedRevision: rev,
@@ -84,7 +84,7 @@ func newUpdateDiaryEntry(workspaces tools.WorkspaceProvider, svc *diary.Service)
 	}
 }
 
-func newListDiaryEntries(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newListDiaryEntries(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "listDiaryEntries",
 		definition: mcp.NewTool(
@@ -106,7 +106,7 @@ func newListDiaryEntries(workspaces tools.WorkspaceProvider, svc *diary.Service)
 			if err != nil {
 				return nil, err
 			}
-			return svc.ListEntries(root, diary.ListEntriesIn{
+			return svc.ListEntries(root, corediary.ListEntriesIn{
 				RequestID:     requestID,
 				DiaryDateFrom: optionalString(request, "diary_date_from"),
 				DiaryDateTo:   optionalString(request, "diary_date_to"),
@@ -117,7 +117,7 @@ func newListDiaryEntries(workspaces tools.WorkspaceProvider, svc *diary.Service)
 	}
 }
 
-func newDeleteDiaryEntry(workspaces tools.WorkspaceProvider, svc *diary.Service) tools.Tool {
+func newDeleteDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "deleteDiaryEntry",
 		definition: mcp.NewTool(
@@ -148,7 +148,7 @@ func newDeleteDiaryEntry(workspaces tools.WorkspaceProvider, svc *diary.Service)
 			if err != nil {
 				return nil, err
 			}
-			return svc.DeleteEntry(root, diary.DeleteEntryIn{
+			return svc.DeleteEntry(root, corediary.DeleteEntryIn{
 				RequestID:        requestID,
 				EntryID:          entryID,
 				ExpectedRevision: rev,

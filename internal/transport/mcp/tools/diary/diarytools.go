@@ -1,11 +1,11 @@
-package diarytools
+package diary
 
 import (
 	"context"
 	"strings"
 
-	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
-	"github.com/gogodjzhu/mcp-diary/internal/tools"
+	corediary "github.com/gogodjzhu/mcp-diary/internal/core/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -23,10 +23,10 @@ func (t diaryTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mc
 	if err != nil {
 		return tools.Result(failFrom(err)), nil
 	}
-	return tools.Result(diary.OK(data)), nil
+	return tools.Result(corediary.OK(data)), nil
 }
 
-func All(workspaces tools.WorkspaceProvider, svc *diary.Service) []tools.Tool {
+func All(workspaces tools.WorkspaceProvider, svc *corediary.Service) []tools.Tool {
 	return []tools.Tool{
 		newCreateDiarySession(workspaces, svc),
 		newAppendDiarySession(workspaces, svc),
@@ -52,7 +52,7 @@ func workspacePath(ctx context.Context, workspaces tools.WorkspaceProvider) (str
 func requireWritable(workspaces tools.WorkspaceProvider) error {
 	type readOnlyAware interface{ ReadOnly() bool }
 	if ro, ok := workspaces.(readOnlyAware); ok && ro.ReadOnly() {
-		return &diary.Error{Code: 403, Message: "workspace is read-only"}
+		return &corediary.Error{Code: 403, Message: "workspace is read-only"}
 	}
 	return nil
 }
@@ -78,26 +78,26 @@ func requireRevision(request mcp.CallToolRequest) (int, error) {
 }
 
 func argError(message string) error {
-	return &diary.Error{Code: 400, Message: message}
+	return &corediary.Error{Code: 400, Message: message}
 }
 
-func failFrom(err error) diary.Envelope {
-	if de, ok := diary.IsError(err); ok {
-		return diary.Fail(de.Code, de.Message)
+func failFrom(err error) corediary.Envelope {
+	if de, ok := corediary.IsError(err); ok {
+		return corediary.Fail(de.Code, de.Message)
 	}
-	return diary.Fail(500, err.Error())
+	return corediary.Fail(500, err.Error())
 }
 
 func mapWorkspaceErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if de, ok := diary.IsError(err); ok {
+	if de, ok := corediary.IsError(err); ok {
 		return de
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "no authenticated identity") {
-		return &diary.Error{Code: 401, Message: "unauthenticated"}
+		return &corediary.Error{Code: 401, Message: "unauthenticated"}
 	}
 	return err
 }

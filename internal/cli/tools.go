@@ -6,9 +6,9 @@ import (
 
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
-	"github.com/gogodjzhu/mcp-diary/internal/tools"
-	"github.com/gogodjzhu/mcp-diary/internal/tools/diarytools"
-	"github.com/gogodjzhu/mcp-diary/internal/tools/fstools"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
+	diarytools "github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools/fs"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 	"github.com/spf13/cobra"
 )
@@ -33,7 +33,7 @@ func newToolsCommand() *cobra.Command {
 
 			registry := tools.NewRegistry()
 			registry.Add(diarytools.All(workspaces, diary.New(nil, nil))...)
-			registry.Add(fstools.All(workspaces)...)
+			registry.Add(fs.All(workspaces)...)
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tDESCRIPTION")

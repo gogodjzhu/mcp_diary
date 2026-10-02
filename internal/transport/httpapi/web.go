@@ -3,7 +3,7 @@
 // by the assembly root (the shared OAuth middleware), which injects the
 // resolved identity into the request context; the handlers here only read it so
 // the workspace manager can resolve the right sandbox.
-package web
+package httpapi
 
 import (
 	"log/slog"
