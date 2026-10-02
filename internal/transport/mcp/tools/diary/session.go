@@ -18,18 +18,18 @@ func newCreateDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Se
 			mcp.WithString("diary_date", mcp.Description("Business date YYYY-MM-DD. Defaults to today in the server timezone.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			if err := requireWritable(workspaces); err != nil {
+			fs, err := workspaceFS(ctx, workspaces)
+			if err != nil {
 				return nil, err
 			}
-			root, err := workspacePath(ctx, workspaces)
-			if err != nil {
+			if err := requireWritable(fs); err != nil {
 				return nil, err
 			}
 			requestID, err := requireRequestID(request)
 			if err != nil {
 				return nil, err
 			}
-			return svc.CreateSession(root, corediary.CreateSessionIn{
+			return svc.CreateSession(ctx, fs, corediary.CreateSessionIn{
 				RequestID: requestID,
 				DiaryDate: optionalString(request, "diary_date"),
 			})
@@ -49,11 +49,11 @@ func newAppendDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Se
 			mcp.WithString("content", mcp.Required(), mcp.Description("Text fragment to append.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			if err := requireWritable(workspaces); err != nil {
+			fs, err := workspaceFS(ctx, workspaces)
+			if err != nil {
 				return nil, err
 			}
-			root, err := workspacePath(ctx, workspaces)
-			if err != nil {
+			if err := requireWritable(fs); err != nil {
 				return nil, err
 			}
 			requestID, err := requireRequestID(request)
@@ -72,7 +72,7 @@ func newAppendDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Se
 			if err != nil {
 				return nil, err
 			}
-			return svc.AppendSession(root, corediary.AppendSessionIn{
+			return svc.AppendSession(ctx, fs, corediary.AppendSessionIn{
 				RequestID:        requestID,
 				SessionID:        sessionID,
 				ExpectedRevision: rev,
@@ -93,7 +93,7 @@ func newGetDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Servi
 			mcp.WithString("session_id", mcp.Required(), mcp.Description("Draft session id.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			root, err := workspacePath(ctx, workspaces)
+			fs, err := workspaceFS(ctx, workspaces)
 			if err != nil {
 				return nil, err
 			}
@@ -105,7 +105,7 @@ func newGetDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Servi
 			if err != nil {
 				return nil, argError("session_id is required")
 			}
-			return svc.GetSession(root, corediary.GetSessionIn{
+			return svc.GetSession(ctx, fs, corediary.GetSessionIn{
 				RequestID: requestID,
 				SessionID: sessionID,
 			})
@@ -125,11 +125,11 @@ func newUpdateDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Se
 			mcp.WithString("content", mcp.Required(), mcp.Description("Full replacement draft text.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			if err := requireWritable(workspaces); err != nil {
+			fs, err := workspaceFS(ctx, workspaces)
+			if err != nil {
 				return nil, err
 			}
-			root, err := workspacePath(ctx, workspaces)
-			if err != nil {
+			if err := requireWritable(fs); err != nil {
 				return nil, err
 			}
 			requestID, err := requireRequestID(request)
@@ -148,7 +148,7 @@ func newUpdateDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Se
 			if err != nil {
 				return nil, err
 			}
-			return svc.UpdateSession(root, corediary.UpdateSessionIn{
+			return svc.UpdateSession(ctx, fs, corediary.UpdateSessionIn{
 				RequestID:        requestID,
 				SessionID:        sessionID,
 				ExpectedRevision: rev,
@@ -170,11 +170,11 @@ func newCommitDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Se
 			mcp.WithInteger("expected_revision", mcp.Required(), mcp.Description("Current revision; mismatches return 409.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			if err := requireWritable(workspaces); err != nil {
+			fs, err := workspaceFS(ctx, workspaces)
+			if err != nil {
 				return nil, err
 			}
-			root, err := workspacePath(ctx, workspaces)
-			if err != nil {
+			if err := requireWritable(fs); err != nil {
 				return nil, err
 			}
 			requestID, err := requireRequestID(request)
@@ -189,7 +189,7 @@ func newCommitDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Se
 			if err != nil {
 				return nil, err
 			}
-			return svc.CommitSession(root, corediary.CommitSessionIn{
+			return svc.CommitSession(ctx, fs, corediary.CommitSessionIn{
 				RequestID:        requestID,
 				SessionID:        sessionID,
 				ExpectedRevision: rev,
@@ -210,11 +210,11 @@ func newDiscardDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.S
 			mcp.WithInteger("expected_revision", mcp.Required(), mcp.Description("Current revision; mismatches return 409.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			if err := requireWritable(workspaces); err != nil {
+			fs, err := workspaceFS(ctx, workspaces)
+			if err != nil {
 				return nil, err
 			}
-			root, err := workspacePath(ctx, workspaces)
-			if err != nil {
+			if err := requireWritable(fs); err != nil {
 				return nil, err
 			}
 			requestID, err := requireRequestID(request)
@@ -229,7 +229,7 @@ func newDiscardDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.S
 			if err != nil {
 				return nil, err
 			}
-			return svc.DiscardSession(root, corediary.DiscardSessionIn{
+			return svc.DiscardSession(ctx, fs, corediary.DiscardSessionIn{
 				RequestID:        requestID,
 				SessionID:        sessionID,
 				ExpectedRevision: rev,

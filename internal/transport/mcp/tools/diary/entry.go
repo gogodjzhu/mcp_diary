@@ -19,7 +19,7 @@ func newGetDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Service
 			mcp.WithString("entry_id", mcp.Required(), mcp.Description("Committed entry id.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			root, err := workspacePath(ctx, workspaces)
+			fs, err := workspaceFS(ctx, workspaces)
 			if err != nil {
 				return nil, err
 			}
@@ -31,7 +31,7 @@ func newGetDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Service
 			if err != nil {
 				return nil, argError("entry_id is required")
 			}
-			return svc.GetEntry(root, corediary.GetEntryIn{
+			return svc.GetEntry(ctx, fs, corediary.GetEntryIn{
 				RequestID: requestID,
 				EntryID:   entryID,
 			})
@@ -51,11 +51,11 @@ func newUpdateDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Serv
 			mcp.WithString("content", mcp.Required(), mcp.Description("Full replacement entry text.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			if err := requireWritable(workspaces); err != nil {
+			fs, err := workspaceFS(ctx, workspaces)
+			if err != nil {
 				return nil, err
 			}
-			root, err := workspacePath(ctx, workspaces)
-			if err != nil {
+			if err := requireWritable(fs); err != nil {
 				return nil, err
 			}
 			requestID, err := requireRequestID(request)
@@ -74,7 +74,7 @@ func newUpdateDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Serv
 			if err != nil {
 				return nil, err
 			}
-			return svc.UpdateEntry(root, corediary.UpdateEntryIn{
+			return svc.UpdateEntry(ctx, fs, corediary.UpdateEntryIn{
 				RequestID:        requestID,
 				EntryID:          entryID,
 				ExpectedRevision: rev,
@@ -98,7 +98,7 @@ func newListDiaryEntries(workspaces tools.WorkspaceProvider, svc *corediary.Serv
 			mcp.WithInteger("page_size", mcp.Description("Page size. Defaults to 20, max 100.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			root, err := workspacePath(ctx, workspaces)
+			fs, err := workspaceFS(ctx, workspaces)
 			if err != nil {
 				return nil, err
 			}
@@ -106,7 +106,7 @@ func newListDiaryEntries(workspaces tools.WorkspaceProvider, svc *corediary.Serv
 			if err != nil {
 				return nil, err
 			}
-			return svc.ListEntries(root, corediary.ListEntriesIn{
+			return svc.ListEntries(ctx, fs, corediary.ListEntriesIn{
 				RequestID:     requestID,
 				DiaryDateFrom: optionalString(request, "diary_date_from"),
 				DiaryDateTo:   optionalString(request, "diary_date_to"),
@@ -129,11 +129,11 @@ func newDeleteDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Serv
 			mcp.WithInteger("expected_revision", mcp.Required(), mcp.Description("Current revision; mismatches return 409.")),
 		),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
-			if err := requireWritable(workspaces); err != nil {
+			fs, err := workspaceFS(ctx, workspaces)
+			if err != nil {
 				return nil, err
 			}
-			root, err := workspacePath(ctx, workspaces)
-			if err != nil {
+			if err := requireWritable(fs); err != nil {
 				return nil, err
 			}
 			requestID, err := requireRequestID(request)
@@ -148,7 +148,7 @@ func newDeleteDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Serv
 			if err != nil {
 				return nil, err
 			}
-			return svc.DeleteEntry(root, corediary.DeleteEntryIn{
+			return svc.DeleteEntry(ctx, fs, corediary.DeleteEntryIn{
 				RequestID:        requestID,
 				EntryID:          entryID,
 				ExpectedRevision: rev,

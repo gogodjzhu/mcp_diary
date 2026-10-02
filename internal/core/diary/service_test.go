@@ -1,19 +1,33 @@
 package diary
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 )
 
-func testService(t *testing.T) (*Service, string, time.Time) {
+func testFS(t *testing.T, readOnly bool) *filesystem.Service {
 	t.Helper()
-	root := t.TempDir()
+	fs, err := filesystem.New(filesystem.Options{
+		Root:     t.TempDir(),
+		ReadOnly: readOnly,
+	})
+	if err != nil {
+		t.Fatalf("filesystem.New: %v", err)
+	}
+	return fs
+}
+
+func testService(t *testing.T) (*Service, *filesystem.Service, time.Time) {
+	t.Helper()
 	now := time.Date(2026, 10, 1, 13, 0, 0, 0, time.FixedZone("CST", 8*3600))
 	clock := now
 	svc := New(func() time.Time { return clock }, now.Location())
-	return svc, root, now
+	return svc, testFS(t, false), now
 }
 
 func mustSession(t *testing.T, v any) *Session {
@@ -26,9 +40,10 @@ func mustSession(t *testing.T, v any) *Session {
 }
 
 func TestCreateAppendCommitFlow(t *testing.T) {
-	svc, root, now := testService(t)
+	svc, fs, now := testService(t)
+	ctx := context.Background()
 
-	created, err := svc.CreateSession(root, CreateSessionIn{RequestID: "req_001", DiaryDate: "2026-10-01"})
+	created, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "req_001", DiaryDate: "2026-10-01"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -40,7 +55,7 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 		t.Fatalf("created_at = %v, want %v", sess.CreatedAt, now)
 	}
 
-	appended, err := svc.AppendSession(root, AppendSessionIn{
+	appended, err := svc.AppendSession(ctx, fs, AppendSessionIn{
 		RequestID:        "req_002",
 		SessionID:        sess.SessionID,
 		ExpectedRevision: 1,
@@ -54,7 +69,7 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 		t.Fatalf("revision = %v, want 2", data["revision"])
 	}
 
-	got, err := svc.GetSession(root, GetSessionIn{RequestID: "req_003", SessionID: sess.SessionID})
+	got, err := svc.GetSession(ctx, fs, GetSessionIn{RequestID: "req_003", SessionID: sess.SessionID})
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
@@ -62,7 +77,7 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 		t.Fatalf("content = %q", mustSession(t, got).Content)
 	}
 
-	updated, err := svc.UpdateSession(root, UpdateSessionIn{
+	updated, err := svc.UpdateSession(ctx, fs, UpdateSessionIn{
 		RequestID:        "req_004",
 		SessionID:        sess.SessionID,
 		ExpectedRevision: 2,
@@ -75,7 +90,7 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 		t.Fatalf("update revision = %v", updated.(map[string]any)["revision"])
 	}
 
-	committed, err := svc.CommitSession(root, CommitSessionIn{
+	committed, err := svc.CommitSession(ctx, fs, CommitSessionIn{
 		RequestID:        "req_005",
 		SessionID:        sess.SessionID,
 		ExpectedRevision: 3,
@@ -89,13 +104,13 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 		t.Fatalf("status = %v", out["status"])
 	}
 
-	if _, err := svc.GetSession(root, GetSessionIn{RequestID: "req_006", SessionID: sess.SessionID}); err == nil {
+	if _, err := svc.GetSession(ctx, fs, GetSessionIn{RequestID: "req_006", SessionID: sess.SessionID}); err == nil {
 		t.Fatal("draft should be deleted after commit")
 	} else if de, ok := IsError(err); !ok || de.Code != 404 {
 		t.Fatalf("GetSession after commit err = %v", err)
 	}
 
-	entry, err := svc.GetEntry(root, GetEntryIn{RequestID: "req_007", EntryID: entryID})
+	entry, err := svc.GetEntry(ctx, fs, GetEntryIn{RequestID: "req_007", EntryID: entryID})
 	if err != nil {
 		t.Fatalf("GetEntry: %v", err)
 	}
@@ -103,7 +118,7 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 		t.Fatalf("entry = %+v", entry)
 	}
 
-	if _, err := svc.CreateSession(root, CreateSessionIn{RequestID: "req_008", DiaryDate: "2026-10-01"}); err == nil {
+	if _, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "req_008", DiaryDate: "2026-10-01"}); err == nil {
 		t.Fatal("expected conflict creating draft for committed date")
 	} else if de, ok := IsError(err); !ok || de.Code != 409 {
 		t.Fatalf("CreateSession after commit err = %v", err)
@@ -111,15 +126,16 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 }
 
 func TestResumeDraftAndIdempotency(t *testing.T) {
-	svc, root, _ := testService(t)
+	svc, fs, _ := testService(t)
+	ctx := context.Background()
 
-	first, err := svc.CreateSession(root, CreateSessionIn{RequestID: "req_a", DiaryDate: "2026-10-01"})
+	first, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "req_a", DiaryDate: "2026-10-01"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	sess := mustSession(t, first)
 
-	replay, err := svc.CreateSession(root, CreateSessionIn{RequestID: "req_a", DiaryDate: "2026-10-01"})
+	replay, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "req_a", DiaryDate: "2026-10-01"})
 	if err != nil {
 		t.Fatalf("idempotent CreateSession: %v", err)
 	}
@@ -127,7 +143,7 @@ func TestResumeDraftAndIdempotency(t *testing.T) {
 		t.Fatalf("idempotent session id mismatch")
 	}
 
-	second, err := svc.CreateSession(root, CreateSessionIn{RequestID: "req_b", DiaryDate: "2026-10-01"})
+	second, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "req_b", DiaryDate: "2026-10-01"})
 	if err != nil {
 		t.Fatalf("resume CreateSession: %v", err)
 	}
@@ -137,13 +153,14 @@ func TestResumeDraftAndIdempotency(t *testing.T) {
 }
 
 func TestRevisionConflict(t *testing.T) {
-	svc, root, _ := testService(t)
-	created, err := svc.CreateSession(root, CreateSessionIn{RequestID: "req_1", DiaryDate: "2026-10-01"})
+	svc, fs, _ := testService(t)
+	ctx := context.Background()
+	created, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "req_1", DiaryDate: "2026-10-01"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	sess := mustSession(t, created)
-	_, err = svc.AppendSession(root, AppendSessionIn{
+	_, err = svc.AppendSession(ctx, fs, AppendSessionIn{
 		RequestID:        "req_2",
 		SessionID:        sess.SessionID,
 		ExpectedRevision: 99,
@@ -159,35 +176,36 @@ func TestRevisionConflict(t *testing.T) {
 }
 
 func TestDiscardAndUpdateDeleteEntry(t *testing.T) {
-	svc, root, _ := testService(t)
+	svc, fs, _ := testService(t)
+	ctx := context.Background()
 
-	created, err := svc.CreateSession(root, CreateSessionIn{RequestID: "d1", DiaryDate: "2026-10-02"})
+	created, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "d1", DiaryDate: "2026-10-02"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	sess := mustSession(t, created)
-	if _, err := svc.DiscardSession(root, DiscardSessionIn{RequestID: "d2", SessionID: sess.SessionID, ExpectedRevision: 1}); err != nil {
+	if _, err := svc.DiscardSession(ctx, fs, DiscardSessionIn{RequestID: "d2", SessionID: sess.SessionID, ExpectedRevision: 1}); err != nil {
 		t.Fatalf("DiscardSession: %v", err)
 	}
-	if _, err := svc.GetSession(root, GetSessionIn{RequestID: "d3", SessionID: sess.SessionID}); err == nil {
+	if _, err := svc.GetSession(ctx, fs, GetSessionIn{RequestID: "d3", SessionID: sess.SessionID}); err == nil {
 		t.Fatal("discarded session should be gone")
 	}
 
-	created, err = svc.CreateSession(root, CreateSessionIn{RequestID: "e1", DiaryDate: "2026-10-02"})
+	created, err = svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "e1", DiaryDate: "2026-10-02"})
 	if err != nil {
 		t.Fatalf("recreate after discard: %v", err)
 	}
 	sess = mustSession(t, created)
-	if _, err := svc.AppendSession(root, AppendSessionIn{RequestID: "e2", SessionID: sess.SessionID, ExpectedRevision: 1, Content: "hello"}); err != nil {
+	if _, err := svc.AppendSession(ctx, fs, AppendSessionIn{RequestID: "e2", SessionID: sess.SessionID, ExpectedRevision: 1, Content: "hello"}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	committed, err := svc.CommitSession(root, CommitSessionIn{RequestID: "e3", SessionID: sess.SessionID, ExpectedRevision: 2})
+	committed, err := svc.CommitSession(ctx, fs, CommitSessionIn{RequestID: "e3", SessionID: sess.SessionID, ExpectedRevision: 2})
 	if err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 	entryID := committed.(map[string]any)["entry_id"].(string)
 
-	updated, err := svc.UpdateEntry(root, UpdateEntryIn{RequestID: "e4", EntryID: entryID, ExpectedRevision: 1, Content: "hello world"})
+	updated, err := svc.UpdateEntry(ctx, fs, UpdateEntryIn{RequestID: "e4", EntryID: entryID, ExpectedRevision: 1, Content: "hello world"})
 	if err != nil {
 		t.Fatalf("UpdateEntry: %v", err)
 	}
@@ -195,7 +213,7 @@ func TestDiscardAndUpdateDeleteEntry(t *testing.T) {
 		t.Fatalf("entry revision = %v", updated.(map[string]any)["revision"])
 	}
 
-	listed, err := svc.ListEntries(root, ListEntriesIn{RequestID: "e5", DiaryDateFrom: "2026-10-01", DiaryDateTo: "2026-10-07"})
+	listed, err := svc.ListEntries(ctx, fs, ListEntriesIn{RequestID: "e5", DiaryDateFrom: "2026-10-01", DiaryDateTo: "2026-10-07"})
 	if err != nil {
 		t.Fatalf("ListEntries: %v", err)
 	}
@@ -204,35 +222,41 @@ func TestDiscardAndUpdateDeleteEntry(t *testing.T) {
 		t.Fatalf("total = %v", list["total"])
 	}
 
-	if _, err := svc.DeleteEntry(root, DeleteEntryIn{RequestID: "e6", EntryID: entryID, ExpectedRevision: 2}); err != nil {
+	if _, err := svc.DeleteEntry(ctx, fs, DeleteEntryIn{RequestID: "e6", EntryID: entryID, ExpectedRevision: 2}); err != nil {
 		t.Fatalf("DeleteEntry: %v", err)
 	}
-	if _, err := svc.GetEntry(root, GetEntryIn{RequestID: "e7", EntryID: entryID}); err == nil {
+	if _, err := svc.GetEntry(ctx, fs, GetEntryIn{RequestID: "e7", EntryID: entryID}); err == nil {
 		t.Fatal("deleted entry should be gone")
 	}
 }
 
 func TestWorkspaceIsolationAndPersist(t *testing.T) {
+	ctx := context.Background()
 	now := time.Date(2026, 10, 1, 13, 0, 0, 0, time.UTC)
 	svc := New(func() time.Time { return now }, time.UTC)
-	alice := t.TempDir()
-	bob := t.TempDir()
+	alice := testFS(t, false)
+	bob := testFS(t, false)
 
-	a, err := svc.CreateSession(alice, CreateSessionIn{RequestID: "a1", DiaryDate: "2026-10-01"})
+	a, err := svc.CreateSession(ctx, alice, CreateSessionIn{RequestID: "a1", DiaryDate: "2026-10-01"})
 	if err != nil {
 		t.Fatalf("alice create: %v", err)
 	}
 	aliceID := mustSession(t, a).SessionID
-	if _, err := svc.GetSession(bob, GetSessionIn{RequestID: "b1", SessionID: aliceID}); err == nil {
+	if _, err := svc.GetSession(ctx, bob, GetSessionIn{RequestID: "b1", SessionID: aliceID}); err == nil {
 		t.Fatal("bob must not see alice session")
 	}
 
-	if _, err := os.Stat(filepath.Join(alice, ".mcp-diary", "diary.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(alice.Root(), ".mcp-diary", "diary.json")); err != nil {
 		t.Fatalf("store not written: %v", err)
 	}
 
+	// A fresh service over the same workspace must reload persisted state.
 	reloaded := New(func() time.Time { return now }, time.UTC)
-	got, err := reloaded.GetSession(alice, GetSessionIn{RequestID: "a2", SessionID: aliceID})
+	aliceReopened, err := filesystem.New(filesystem.Options{Root: alice.Root()})
+	if err != nil {
+		t.Fatalf("reopen workspace: %v", err)
+	}
+	got, err := reloaded.GetSession(ctx, aliceReopened, GetSessionIn{RequestID: "a2", SessionID: aliceID})
 	if err != nil {
 		t.Fatalf("reload GetSession: %v", err)
 	}
@@ -241,9 +265,21 @@ func TestWorkspaceIsolationAndPersist(t *testing.T) {
 	}
 }
 
+func TestReadOnlyWorkspaceBlocksWrites(t *testing.T) {
+	svc, _, _ := testService(t)
+	ctx := context.Background()
+	fs := testFS(t, true)
+
+	if _, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "ro1", DiaryDate: "2026-10-01"}); err == nil {
+		t.Fatal("expected read-only workspace to block CreateSession")
+	} else if de, ok := IsError(err); !ok || de.Code != 500 {
+		t.Fatalf("err = %v, want internal error", err)
+	}
+}
+
 func TestDefaultDiaryDate(t *testing.T) {
-	svc, root, _ := testService(t)
-	created, err := svc.CreateSession(root, CreateSessionIn{RequestID: "n1"})
+	svc, fs, _ := testService(t)
+	created, err := svc.CreateSession(context.Background(), fs, CreateSessionIn{RequestID: "n1"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -253,8 +289,8 @@ func TestDefaultDiaryDate(t *testing.T) {
 }
 
 func TestInvalidDate(t *testing.T) {
-	svc, root, _ := testService(t)
-	if _, err := svc.CreateSession(root, CreateSessionIn{RequestID: "x", DiaryDate: "10/01"}); err == nil {
+	svc, fs, _ := testService(t)
+	if _, err := svc.CreateSession(context.Background(), fs, CreateSessionIn{RequestID: "x", DiaryDate: "10/01"}); err == nil {
 		t.Fatal("expected invalid date")
 	} else if de, ok := IsError(err); !ok || de.Code != 400 {
 		t.Fatalf("err = %v", err)

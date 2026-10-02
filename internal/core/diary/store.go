@@ -1,15 +1,18 @@
 package diary
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 )
+
+// storePath is the workspace-relative location of the diary store file.
+const storePath = ".mcp-diary/diary.json"
 
 type storeFile struct {
 	Sessions     map[string]*Session `json:"sessions"`
@@ -19,20 +22,23 @@ type storeFile struct {
 	DateEntries  map[string]string   `json:"date_entries"`
 }
 
+// Store persists one workspace's diary data. Every IO operation goes through
+// the sandboxed filesystem.Service so the store is confined to the workspace
+// root and honours its read-only flag.
 type Store struct {
 	mu   sync.Mutex
-	path string
+	fs   *filesystem.Service
 	now  func() time.Time
 	data storeFile
 }
 
-func newStore(path string, now func() time.Time) *Store {
+func newStore(fs *filesystem.Service, now func() time.Time) *Store {
 	if now == nil {
 		now = func() time.Time { return time.Now() }
 	}
 	return &Store{
-		path: path,
-		now:  now,
+		fs:  fs,
+		now: now,
 		data: storeFile{
 			Sessions:     map[string]*Session{},
 			Entries:      map[string]*Entry{},
@@ -43,20 +49,20 @@ func newStore(path string, now func() time.Time) *Store {
 	}
 }
 
-func loadStore(path string, now func() time.Time) (*Store, error) {
-	s := newStore(path, now)
-	b, err := os.ReadFile(path)
+func loadStore(ctx context.Context, fs *filesystem.Service, now func() time.Time) (*Store, error) {
+	s := newStore(fs, now)
+	b, err := fs.ReadFile(ctx, storePath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, filesystem.ErrNotFound) {
 			return s, nil
 		}
-		return nil, fmt.Errorf("read diary store: %w", err)
+		return nil, err
 	}
 	if len(b) == 0 {
 		return s, nil
 	}
 	if err := json.Unmarshal(b, &s.data); err != nil {
-		return nil, fmt.Errorf("decode diary store: %w", err)
+		return nil, err
 	}
 	if s.data.Sessions == nil {
 		s.data.Sessions = map[string]*Session{}
@@ -76,22 +82,17 @@ func loadStore(path string, now func() time.Time) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) persistLocked() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return fmt.Errorf("create diary store dir: %w", err)
-	}
+// persistLocked atomically replaces the store file. Callers must hold s.mu.
+func (s *Store) persistLocked(ctx context.Context) error {
 	b, err := json.MarshalIndent(s.data, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode diary store: %w", err)
+		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return fmt.Errorf("write diary store: %w", err)
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		return fmt.Errorf("replace diary store: %w", err)
-	}
-	return nil
+	_, err = s.fs.WriteAtomic(ctx, storePath, string(b), filesystem.WriteOptions{
+		CreateDirs: true,
+		Mode:       0o600,
+	})
+	return err
 }
 
 func cloneSession(src *Session) *Session {

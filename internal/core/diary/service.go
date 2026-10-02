@@ -1,11 +1,13 @@
 package diary
 
 import (
-	"path/filepath"
+	"context"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 )
 
 const (
@@ -40,21 +42,23 @@ func New(now func() time.Time, loc *time.Location) *Service {
 	}
 }
 
-func (s *Service) storeFor(workspaceRoot string) (*Store, error) {
-	if workspaceRoot == "" {
-		return nil, errf(codeInternal, "workspace root is empty")
+// storeFor returns the persisted store for the workspace behind fs, loading it
+// from the sandbox on first use. Stores are cached per workspace root.
+func (s *Service) storeFor(ctx context.Context, fs *filesystem.Service) (*Store, error) {
+	if fs == nil {
+		return nil, errf(codeInternal, "no filesystem bound to the request")
 	}
-	path := filepath.Join(workspaceRoot, ".mcp-diary", "diary.json")
+	root := fs.Root()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st, ok := s.stores[path]; ok {
+	if st, ok := s.stores[root]; ok {
 		return st, nil
 	}
-	st, err := loadStore(path, s.now)
+	st, err := loadStore(ctx, fs, s.now)
 	if err != nil {
 		return nil, err
 	}
-	s.stores[path] = st
+	s.stores[root] = st
 	return st, nil
 }
 
@@ -63,7 +67,7 @@ type CreateSessionIn struct {
 	DiaryDate string
 }
 
-func (s *Service) CreateSession(workspaceRoot string, in CreateSessionIn) (any, error) {
+func (s *Service) CreateSession(ctx context.Context, fs *filesystem.Service, in CreateSessionIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
@@ -71,7 +75,7 @@ func (s *Service) CreateSession(workspaceRoot string, in CreateSessionIn) (any, 
 	if err != nil {
 		return nil, err
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -89,7 +93,7 @@ func (s *Service) CreateSession(workspaceRoot string, in CreateSessionIn) (any, 
 		if sess == nil || sess.Status != StatusDraft {
 			return nil, errf(codeConflict, "diary session for %s is not a draft", date)
 		}
-		if err := remember(st, in.RequestID, sess); err != nil {
+		if err := remember(ctx, st, in.RequestID, sess); err != nil {
 			return nil, err
 		}
 		return sess, nil
@@ -107,7 +111,7 @@ func (s *Service) CreateSession(workspaceRoot string, in CreateSessionIn) (any, 
 	}
 	st.data.Sessions[sess.SessionID] = sess
 	st.data.DateSessions[date] = sess.SessionID
-	if err := remember(st, in.RequestID, cloneSession(sess)); err != nil {
+	if err := remember(ctx, st, in.RequestID, cloneSession(sess)); err != nil {
 		return nil, err
 	}
 	return cloneSession(sess), nil
@@ -120,14 +124,14 @@ type AppendSessionIn struct {
 	Content          string
 }
 
-func (s *Service) AppendSession(workspaceRoot string, in AppendSessionIn) (any, error) {
+func (s *Service) AppendSession(ctx context.Context, fs *filesystem.Service, in AppendSessionIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
 		return nil, errf(codeBadRequest, "session_id is required")
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -150,7 +154,7 @@ func (s *Service) AppendSession(workspaceRoot string, in AppendSessionIn) (any, 
 		"content":    sess.Content,
 		"updated_at": sess.UpdatedAt,
 	}
-	if err := remember(st, in.RequestID, out); err != nil {
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -161,14 +165,14 @@ type GetSessionIn struct {
 	SessionID string
 }
 
-func (s *Service) GetSession(workspaceRoot string, in GetSessionIn) (any, error) {
+func (s *Service) GetSession(ctx context.Context, fs *filesystem.Service, in GetSessionIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
 		return nil, errf(codeBadRequest, "session_id is required")
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -182,7 +186,7 @@ func (s *Service) GetSession(workspaceRoot string, in GetSessionIn) (any, error)
 	if sess == nil {
 		return nil, errf(codeNotFound, "session %s not found", in.SessionID)
 	}
-	if err := remember(st, in.RequestID, sess); err != nil {
+	if err := remember(ctx, st, in.RequestID, sess); err != nil {
 		return nil, err
 	}
 	return sess, nil
@@ -195,14 +199,14 @@ type UpdateSessionIn struct {
 	Content          string
 }
 
-func (s *Service) UpdateSession(workspaceRoot string, in UpdateSessionIn) (any, error) {
+func (s *Service) UpdateSession(ctx context.Context, fs *filesystem.Service, in UpdateSessionIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
 		return nil, errf(codeBadRequest, "session_id is required")
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -225,7 +229,7 @@ func (s *Service) UpdateSession(workspaceRoot string, in UpdateSessionIn) (any, 
 		"content":    sess.Content,
 		"updated_at": sess.UpdatedAt,
 	}
-	if err := remember(st, in.RequestID, out); err != nil {
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -237,14 +241,14 @@ type CommitSessionIn struct {
 	ExpectedRevision int
 }
 
-func (s *Service) CommitSession(workspaceRoot string, in CommitSessionIn) (any, error) {
+func (s *Service) CommitSession(ctx context.Context, fs *filesystem.Service, in CommitSessionIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
 		return nil, errf(codeBadRequest, "session_id is required")
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -282,7 +286,7 @@ func (s *Service) CommitSession(workspaceRoot string, in CommitSessionIn) (any, 
 		"created_at": entry.CreatedAt,
 		"updated_at": entry.UpdatedAt,
 	}
-	if err := remember(st, in.RequestID, out); err != nil {
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -294,14 +298,14 @@ type DiscardSessionIn struct {
 	ExpectedRevision int
 }
 
-func (s *Service) DiscardSession(workspaceRoot string, in DiscardSessionIn) (any, error) {
+func (s *Service) DiscardSession(ctx context.Context, fs *filesystem.Service, in DiscardSessionIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
 		return nil, errf(codeBadRequest, "session_id is required")
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -323,7 +327,7 @@ func (s *Service) DiscardSession(workspaceRoot string, in DiscardSessionIn) (any
 		"status":     StatusDiscarded,
 		"updated_at": now,
 	}
-	if err := remember(st, in.RequestID, out); err != nil {
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -334,14 +338,14 @@ type GetEntryIn struct {
 	EntryID   string
 }
 
-func (s *Service) GetEntry(workspaceRoot string, in GetEntryIn) (any, error) {
+func (s *Service) GetEntry(ctx context.Context, fs *filesystem.Service, in GetEntryIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.EntryID) == "" {
 		return nil, errf(codeBadRequest, "entry_id is required")
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -355,7 +359,7 @@ func (s *Service) GetEntry(workspaceRoot string, in GetEntryIn) (any, error) {
 	if entry == nil {
 		return nil, errf(codeNotFound, "entry %s not found", in.EntryID)
 	}
-	if err := remember(st, in.RequestID, entry); err != nil {
+	if err := remember(ctx, st, in.RequestID, entry); err != nil {
 		return nil, err
 	}
 	return entry, nil
@@ -368,14 +372,14 @@ type UpdateEntryIn struct {
 	Content          string
 }
 
-func (s *Service) UpdateEntry(workspaceRoot string, in UpdateEntryIn) (any, error) {
+func (s *Service) UpdateEntry(ctx context.Context, fs *filesystem.Service, in UpdateEntryIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.EntryID) == "" {
 		return nil, errf(codeBadRequest, "entry_id is required")
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -400,7 +404,7 @@ func (s *Service) UpdateEntry(workspaceRoot string, in UpdateEntryIn) (any, erro
 		"revision":   entry.Revision,
 		"updated_at": entry.UpdatedAt,
 	}
-	if err := remember(st, in.RequestID, out); err != nil {
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -414,7 +418,7 @@ type ListEntriesIn struct {
 	PageSize      int
 }
 
-func (s *Service) ListEntries(workspaceRoot string, in ListEntriesIn) (any, error) {
+func (s *Service) ListEntries(ctx context.Context, fs *filesystem.Service, in ListEntriesIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
@@ -440,7 +444,7 @@ func (s *Service) ListEntries(workspaceRoot string, in ListEntriesIn) (any, erro
 		pageSize = 100
 	}
 
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -478,7 +482,7 @@ func (s *Service) ListEntries(workspaceRoot string, in ListEntriesIn) (any, erro
 		"page_size": pageSize,
 		"total":     total,
 	}
-	if err := remember(st, in.RequestID, out); err != nil {
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -490,14 +494,14 @@ type DeleteEntryIn struct {
 	ExpectedRevision int
 }
 
-func (s *Service) DeleteEntry(workspaceRoot string, in DeleteEntryIn) (any, error) {
+func (s *Service) DeleteEntry(ctx context.Context, fs *filesystem.Service, in DeleteEntryIn) (any, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.EntryID) == "" {
 		return nil, errf(codeBadRequest, "entry_id is required")
 	}
-	st, err := s.storeFor(workspaceRoot)
+	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, wrapInternal(err)
 	}
@@ -522,7 +526,7 @@ func (s *Service) DeleteEntry(workspaceRoot string, in DeleteEntryIn) (any, erro
 		"entry_id": in.EntryID,
 		"deleted":  true,
 	}
-	if err := remember(st, in.RequestID, out); err != nil {
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -572,9 +576,9 @@ func replay(st *Store, requestID string) (any, bool) {
 	return v, ok
 }
 
-func remember(st *Store, requestID string, value any) error {
+func remember(ctx context.Context, st *Store, requestID string, value any) error {
 	st.data.Idempotency[requestID] = value
-	if err := st.persistLocked(); err != nil {
+	if err := st.persistLocked(ctx); err != nil {
 		return wrapInternal(err)
 	}
 	return nil

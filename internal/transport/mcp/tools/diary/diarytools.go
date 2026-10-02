@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	corediary "github.com/gogodjzhu/mcp-diary/internal/core/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -41,17 +42,18 @@ func All(workspaces tools.WorkspaceProvider, svc *corediary.Service) []tools.Too
 	}
 }
 
-func workspacePath(ctx context.Context, workspaces tools.WorkspaceProvider) (string, error) {
+// workspaceFS resolves the sandboxed filesystem for the caller identity. All
+// diary IO is confined to it.
+func workspaceFS(ctx context.Context, workspaces tools.WorkspaceProvider) (*filesystem.Service, error) {
 	fs, err := workspaces.Filesystem(ctx)
 	if err != nil {
-		return "", mapWorkspaceErr(err)
+		return nil, mapWorkspaceErr(err)
 	}
-	return fs.Root(), nil
+	return fs, nil
 }
 
-func requireWritable(workspaces tools.WorkspaceProvider) error {
-	type readOnlyAware interface{ ReadOnly() bool }
-	if ro, ok := workspaces.(readOnlyAware); ok && ro.ReadOnly() {
+func requireWritable(fs *filesystem.Service) error {
+	if fs.ReadOnly() {
 		return &corediary.Error{Code: 403, Message: "workspace is read-only"}
 	}
 	return nil
