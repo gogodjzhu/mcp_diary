@@ -24,7 +24,7 @@ RUN go mod download
 
 COPY . .
 # Use the freshly built frontend instead of the committed embed output.
-COPY --from=web /src/internal/transport/webui/dist ./internal/webui/dist
+COPY --from=web /src/internal/transport/webui/dist ./internal/transport/webui/dist
 
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build \

@@ -1,18 +1,21 @@
 # mcp-diary
 
 基于 [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) 与 [cobra](https://github.com/spf13/cobra)
-构建的 **Streamable HTTP** MCP 服务端，核心能力是**对话式日记存取**以及安全地读写文件。
+构建的 **Streamable HTTP** MCP 服务端，核心能力是**对话式日记存取**。
 
-服务端将某个目录作为“工作区（workspace）”暴露给 MCP 客户端，所有文件操作都被限制在该目录内，
+服务端将某个目录作为“工作区（workspace）”作为日记数据的存储根，所有数据都写入该目录内，
 彻底避免客户端读写宿主机上的任意文件。
+
+> **近期变更**：服务已聚焦日记场景。原文件系统 MCP 工具（`read_file` 等 7 个）与原始文件
+> REST 接口（`/api/files`、`/api/file`）已移除；文件操作仅作为日记存储的内部封装存在。
 
 ## 特性
 
 - **Streamable HTTP 传输**（默认），同时支持 stdio，适配不同 MCP 客户端。
-- **Web 接入与浏览器界面**：同一进程同时提供 REST API（`/api/*`）与内嵌的 Vue 单页应用，可直接在浏览器里浏览工作区文件。
+- **Web 接入与浏览器界面**：同一进程同时提供 REST API（`/api/*`）与内嵌的 Vue 单页应用，用于确认登录身份。
 - **OAuth 2.1 授权服务器**：自身签发 token，Google 只做上游身份；客户端只需 MCP URL，动态注册，无需分发 client id / secret。
-- **按用户隔离工作区**：认证后每个用户拥有独立沙箱目录，互相不可见，也与默认 Root 隔离。
-- **沙箱化文件系统**：基于工作区根目录解析路径，防止 `../` 与符号链接逃逸。
+- **按用户隔离工作区**：认证后每个用户拥有独立沙箱目录，日记数据互相不可见，也与默认 Root 隔离。
+- **封装的沙箱存储**：日记数据通过沙箱化文件服务落盘（原子写入、路径校验、防 `../` 与符号链接逃逸），不直接对外暴露文件接口。
 - **只读模式**：一键禁用所有写操作，适合只读检索场景。
 - **结构化输出**：每个工具同时返回结构化内容与可读的 JSON 文本。
 - **可扩展架构**：新增工具只需实现 `tools.Tool` 接口并注册即可。
@@ -21,36 +24,36 @@
 ## 架构
 
 ```
-cmd/mcp-diary/            程序入口
+cmd/mcp-diary/                程序入口
 internal/
-  cli/                    cobra 命令（serve / tools / version）
-  config/                 运行配置、默认值与校验
-  logging/                基于 slog 的日志构建
-  auth/                   请求身份（从 token 解析出的用户）
-  oauthserver/            OAuth 2.1 授权服务器（Google 联邦、动态注册、文件存储）
-  filesystem/             沙箱化文件服务（与协议解耦，可独立测试）
-  diary/                  纯文本日记存取（草稿会话 + 正式条目）
-  workspace/              按用户解析隔离工作区
-  tools/                  Tool 接口 + 注册表 + 结果辅助函数
-    diarytools/           日记 MCP 工具
-    fstools/              文件系统相关工具实现
-  access/                 接入层
-    mcp/                  MCP Server 组装与 Streamable HTTP 传输
-    web/                  REST API（/api/*），复用同一套 OAuth 校验
-  app/                    组装根：共享依赖、路由与 HTTP 服务生命周期
-  webui/                  go:embed 的前端产物与静态文件服务
-web/                      Vite + Vue 3 + TypeScript 前端源码
+  core/                       领域与应用服务（不依赖任何接入层）
+    diary/                    纯文本日记存取（草稿会话 + 正式条目）
+    filesystem/               沙箱化文件服务（日记存储的封装底层）
+    workspace/                按用户解析隔离工作区
+  auth/                       安全域
+    identity/                 请求身份（从 token 解析出的用户）
+    oauth/                    OAuth 2.1 授权服务器（Google 联邦、动态注册、文件存储）
+  transport/                  接入层：所有对外协议与 UI
+    mcp/                      MCP Server 组装与 Streamable HTTP 传输
+      tools/                  Tool 接口 + 注册表 + 结果辅助函数
+        diary/                日记 MCP 工具
+    httpapi/                  REST API（/api/*），复用同一套 OAuth 校验
+    webui/                    go:embed 的前端产物与静态文件服务
+  platform/                   基础设施
+    config/                   运行配置、默认值与校验
+    logging/                  基于 slog 的日志构建
+  app/                        组装根：共享依赖、路由与 HTTP 服务生命周期
+  cli/                        cobra 命令（serve / tools / version）
+web/                          Vite + Vue 3 + TypeScript 前端源码
 ```
 
-分层原则：
+分层原则（由 `internal/arch_test.go` 固化，违规依赖会让测试失败）：
 
-- `filesystem` 不依赖任何协议，纯业务能力，便于测试与复用。
-- `diary` 是按工作区隔离的纯文本日记存取（草稿会话 + 正式条目），不包含 AI 字段。
-- `oauthserver` 是授权服务器（动态注册、Google 联邦、自签 token）；`auth` 只描述请求身份，不感知工具。
-- `workspace` 根据请求身份解析出对应的沙箱文件系统。
-- `tools` 只负责把业务能力适配成 MCP 工具，运行时从上下文取工作区。
-- `access/mcp` 与 `access/web` 是两个并列的接入层，共享 `auth` / `workspace` / `filesystem`。
-- `app` 负责组装与生命周期，`cli` 只负责参数解析。
+- `platform` 是无业务语义的基础设施（配置、日志），不依赖其他 internal 组。
+- `auth/identity` 只描述请求身份；`auth/oauth` 是授权服务器（动态注册、Google 联邦、自签 token）。
+- `core` 是业务层：`filesystem` 是与协议解耦的沙箱文件能力，`diary` 在其上实现按工作区隔离的日记存取，`workspace` 根据请求身份解析出对应沙箱。
+- `transport` 是接入层：`mcp` 把业务能力适配成 MCP 工具（运行时从上下文取沙箱），`httpapi` 提供 REST API，`webui` 服务浏览器 UI；只允许依赖 `core` / `auth/identity` / `platform`。
+- `app` 是唯一允许 import 所有 internal 包的组合根；`cli` 只通过 `app` 与 `platform` 交互。
 
 ## 快速开始
 
@@ -73,7 +76,7 @@ make build
 - `GET  /.well-known/oauth-authorization-server` — 授权服务器元数据（RFC 8414）。
 - `POST /oauth/register`、`/oauth/authorize`、`/oauth/token`、`/oauth/callback` — 授权流程。
 - `GET  /` — 浏览器界面（内嵌的 Vue 前端）。
-- `GET  /api/me`、`/api/files`、`/api/file` — Web REST API（需 `Authorization: Bearer <token>`）。
+- `GET  /api/me` — Web REST API（需 `Authorization: Bearer <token>`）。
   仅在启用认证时注册，未启用认证时不会暴露。
 
 ### 启用 OAuth 2.1（Google 联邦）
@@ -110,10 +113,11 @@ make build
 
 启用认证后，浏览器访问 `http://<host>:8080/` 即可打开 Web 界面：点击「使用 Google 登录」，
 前端作为本服务的公共客户端走 Authorization Code + PKCE（client id `mcp-diary-web`，服务端预注册），
-token 放在 `sessionStorage`，再带 `Authorization: Bearer` 调用 `/api/*`。
+token 放在 `sessionStorage`，再带 `Authorization: Bearer` 调用 `/api/me` 确认身份。
+日记数据请通过 MCP 客户端读写。
 
 - 前端产物通过 `go:embed` 打进二进制；`make build` 会先构建前端。
-- 只需 `go build`（如 `make build-go`）时使用仓库中已提交的 `internal/webui/dist`。
+- 只需 `go build`（如 `make build-go`）时使用仓库中已提交的 `internal/transport/webui/dist`。
 - 开发时 `make dev` 启动 Vite（`http://localhost:5173`），并把 `/api`、`/mcp`、`/oauth` 代理到本地 `:8080`。
 - 不需要在 Google Console 登记 JavaScript origins：浏览器不直接对接 Google。
 - 对外发布前，把 OAuth consent screen 从 **Testing** 切到 **In production**，否则只有 Test users 能登录。
@@ -144,17 +148,7 @@ MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿�
 
 状态机：`draft -> committed` 或 `draft -> discarded`。终态不可回到草稿。同一用户同一 `diary_date` 只能有一篇正式日记。
 
-## 文件系统工具
-
-| 工具 | 说明 | 只读 |
-| --- | --- | --- |
-| `read_file` | 读取文件内容，支持 `offset` / `limit` 分段读取 | ✅ |
-| `write_file` | 创建或覆盖文件，可选择自动创建父目录 | |
-| `append_file` | 追加内容，文件不存在时创建 | |
-| `list_directory` | 列出目录内容，目录在前、文件在后 | ✅ |
-| `file_info` | 查看路径的元信息（大小、权限、修改时间） | ✅ |
-| `create_directory` | 创建目录 | |
-| `delete_path` | 删除文件或目录（删除目录需 `recursive`） | |
+日记数据以 JSON 形式持久化在每个工作区的 `.mcp-diary/diary.json`，写入走沙箱文件服务的原子替换，用户之间完全隔离。
 
 ## 客户端接入
 
@@ -227,15 +221,14 @@ Web 参数：
 
 ## 安全模型
 
-- 每个请求路径都会在**解析前**做词法校验，并在**解析后**对最长已存在前缀做符号链接解析，
-  两者都必须落在工作区根目录内，否则返回 `path escapes workspace root`。
-- `delete_path` 拒绝删除工作区根目录本身。
-- 通过 `--read-only` 可让服务端完全不可写。
+- 日记数据全部通过**沙箱化文件服务**落盘：每个路径在解析前后都做工作区边界与符号链接校验，
+  落盘使用临时文件 + 原子替换，读者永远不会看到半写状态。
+- `--read-only` 可让服务端完全不可写，日记工具会返回 403。
 - Streamable HTTP 默认开启 DNS rebinding 防护；仅在受控环境（如反向代理）下才使用 `--allow-remote`。
 - 启用认证后：每个请求必须携带本服务签发的 Bearer Token（audience = `<public-url>/mcp`），
   用户目录名由邮箱安全化生成并限制在 `users/` 内，用户之间以及与默认 Root 相互隔离。
 - Google client secret 只留在服务端；客户端通过动态注册拿到自己的 client id，不接触 secret。
-- Web REST API（`/api/*`）复用同一套校验，且只在启用认证时注册；未启用认证时不会暴露文件接口。
+- Web REST API（`/api/*`）复用同一套校验，且只在启用认证时注册；服务不提供任何原始文件读写接口。
 - 生产环境务必使用 HTTPS、设置 `--auth-public-url`，并用 `--auth-encryption-key` 加密落盘的 OAuth 状态。
 
 ## 开发
@@ -251,13 +244,14 @@ make fmt         # 格式化
 ```
 
 集成测试会启动真实的 Streamable HTTP 服务端，并使用 mcp-go 官方客户端完成
-`initialize → tools/list → write_file → append_file → read_file` 全链路验证；
+`initialize → tools/list → 日记工具全流程（创建/追加/提交/查询/删除）` 全链路验证；
 认证测试验证 `401 挑战 → 受保护资源元数据指向本服务 → 授权服务器元数据 → 动态客户端注册`。
-Web 接入层有独立的 `httptest` 用例，覆盖 `/api/me`、`/api/files`、`/api/file` 与错误码映射。
+Web 接入层有独立的 `httptest` 用例，覆盖 `/api/me` 与错误码映射；
+`internal/arch_test.go` 固化 internal 分层依赖规则。
 
 ## 扩展新工具
 
-1. 在 `internal/tools/<group>/` 下新建工具，实现 `tools.Tool`：
+1. 在 `internal/transport/mcp/tools/<group>/` 下新建工具，实现 `tools.Tool`：
 
 ```go
 type myTool struct{ /* 依赖注入 */ }

@@ -91,14 +91,13 @@ opencode mcp logout mcp-diary    # 清除已存凭据
 
 ## 6. 调用工具
 
-启用认证后，每个用户拥有独立工作区：`$ROOT/users/<邮箱>/`（例如 `/data/users/you@gmail.com/`）。
-工具路径请用**相对路径**（相对工作区根）：
+启用认证后，每个用户的日记数据隔离存放在独立工作区：`$ROOT/users/<邮箱>/.mcp-diary/`
+（例如 `/data/users/you@gmail.com/.mcp-diary/diary.json`）。工具参数不接受 `user_id`，
+身份完全由 OAuth token 决定：
 
 ```json
-{ "name": "write_file", "arguments": { "path": "myfile.txt", "content": "hello" } }
+{ "name": "createDiarySession", "arguments": { "request_id": "req_001", "diary_date": "2026-10-02" } }
 ```
-
-实际写入 `/data/users/<邮箱>/myfile.txt`，与其他用户及默认 root 隔离。
 
 ## 7. 浏览器界面（Web）
 
@@ -114,9 +113,9 @@ make build
   --google-client-secret "<你的 Google Client secret>"
 ```
 
-浏览器打开 `http://localhost:8080/` → 点击「使用 Google 登录」→ 同意后即可看到
-`/data/users/<邮箱>/` 下的文件列表。前端是预注册的公共客户端 `mcp-diary-web`，
-走 Authorization Code + PKCE，token 放在 `sessionStorage`。
+浏览器打开 `http://localhost:8080/` → 点击「使用 Google 登录」→ 同意后即可确认当前登录身份。
+前端是预注册的公共客户端 `mcp-diary-web`，走 Authorization Code + PKCE，token 放在 `sessionStorage`。
+日记数据请通过 MCP 工具读写，Web 界面不提供文件浏览。
 
 也可用 curl 直接验证 API：
 
@@ -125,7 +124,7 @@ make build
 curl -i http://localhost:8080/api/me
 
 # 带本服务签发的 token -> 200
-curl -H "Authorization: Bearer <access-token>" http://localhost:8080/api/files?path=.
+curl -H "Authorization: Bearer <access-token>" http://localhost:8080/api/me
 ```
 
 前端开发（热更新）：

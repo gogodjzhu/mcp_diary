@@ -44,7 +44,7 @@ type Config struct {
 	ShutdownTimeout     time.Duration
 	MaxRequestBodyBytes int64
 
-	// Filesystem options.
+	// Workspace (storage) options.
 	Root         string
 	ReadOnly     bool
 	MaxReadBytes int64

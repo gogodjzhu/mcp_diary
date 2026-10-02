@@ -9,14 +9,14 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp"
-	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
-	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
-	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
+	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	diarytools "github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools/diary"
-	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
 // App is a fully assembled server exposing both the MCP and the web access
