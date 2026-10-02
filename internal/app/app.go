@@ -32,6 +32,15 @@ type App struct {
 	web   http.Handler
 }
 
+// BuildRegistry assembles the MCP tool registry bound to the given workspaces.
+// It is shared by the server assembly and the CLI `tools` listing command so
+// both always expose the same tool set.
+func BuildRegistry(workspaces *workspace.Manager) *tools.Registry {
+	registry := tools.NewRegistry()
+	registry.Add(diarytools.All(workspaces, diary.New(nil, nil))...)
+	return registry
+}
+
 // New builds the application: it opens the workspace root, optionally wires the
 // OAuth 2.1 authorization server and the web access layer, and assembles the
 // MCP server with every tool registered.
@@ -54,9 +63,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("open workspace: %w", err)
 	}
 
-	diarySvc := diary.New(nil, nil)
-	registry := tools.NewRegistry()
-	registry.Add(diarytools.All(workspaces, diarySvc)...)
+	registry := BuildRegistry(workspaces)
 
 	app := &App{
 		cfg:        cfg,
