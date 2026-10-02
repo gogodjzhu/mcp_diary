@@ -9,23 +9,25 @@ const (
 )
 
 type Session struct {
-	SessionID string    `json:"session_id"`
-	DiaryDate string    `json:"diary_date"`
-	Content   string    `json:"content"`
-	Status    string    `json:"status"`
-	Revision  int       `json:"revision"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	SessionID   string       `json:"session_id"`
+	DiaryDate   string       `json:"diary_date"`
+	Content     string       `json:"content"`
+	Status      string       `json:"status"`
+	Revision    int          `json:"revision"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
 type Entry struct {
-	EntryID   string    `json:"entry_id"`
-	DiaryDate string    `json:"diary_date"`
-	Content   string    `json:"content"`
-	Status    string    `json:"status"`
-	Revision  int       `json:"revision"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	EntryID     string       `json:"entry_id"`
+	DiaryDate   string       `json:"diary_date"`
+	Content     string       `json:"content"`
+	Status      string       `json:"status"`
+	Revision    int          `json:"revision"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
 type Envelope struct {

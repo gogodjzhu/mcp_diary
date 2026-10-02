@@ -93,7 +93,7 @@ func TestStreamableHTTPEndToEnd(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"read_file", "write_file", "append_file", "list_directory", "createDiarySession", "commitDiarySession", "listDiaryEntries"} {
+	for _, want := range []string{"read_file", "write_file", "append_file", "list_directory", "createDiarySession", "commitDiarySession", "listDiaryEntries", "attachDiaryMedia", "removeDiaryAttachment"} {
 		if !names[want] {
 			t.Fatalf("tool %q not listed; got %v", want, names)
 		}
@@ -266,6 +266,33 @@ func TestDiaryMCPEndToEnd(t *testing.T) {
 	}))
 	if got["data"].(map[string]any)["content"] != "今天开会时需求反复调整，我感到沮丧。" {
 		t.Fatalf("entry content = %v", got["data"])
+	}
+
+	png := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+		0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+		0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+		0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+		0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE,
+		0xD4, 0xEF, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+		0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+	}
+	if err := os.WriteFile(filepath.Join(root, "shot.png"), png, 0o600); err != nil {
+		t.Fatalf("write shot.png: %v", err)
+	}
+	attached := envelopeOf(t, callTool(t, ctx, c, "attachDiaryMedia", map[string]any{
+		"request_id":  "req_004b",
+		"entry_id":    entryID,
+		"source_path": "shot.png",
+	}))
+	if attached["code"].(float64) != 0 {
+		t.Fatalf("attach failed: %v", attached)
+	}
+	att := attached["data"].(map[string]any)["attachment"].(map[string]any)
+	if att["media_type"] != "image" {
+		t.Fatalf("attachment = %v", att)
 	}
 
 	listed := envelopeOf(t, callTool(t, ctx, c, "listDiaryEntries", map[string]any{

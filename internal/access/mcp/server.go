@@ -75,7 +75,7 @@ func instructions(workspaces *workspace.Manager) string {
 	if workspaces.ReadOnly() {
 		mode = "read-only"
 	}
-	diaryGuide := "Use the diary tools to record daily journals as plain text: createDiarySession, appendDiarySession, getDiarySession, updateDiarySession, then commitDiarySession only after the user confirms. Do not invent structured fields. After commit, use getDiaryEntry, listDiaryEntries, updateDiaryEntry, and deleteDiaryEntry. deleteDiaryEntry requires explicit user confirmation."
+	diaryGuide := "Use the diary tools to record daily journals as plain text: createDiarySession, appendDiarySession, getDiarySession, updateDiarySession, then commitDiarySession only after the user confirms. Attach images or videos with attachDiaryMedia (workspace-relative source_path) and remove them with removeDiaryAttachment. Do not invent structured fields. After commit, use getDiaryEntry, listDiaryEntries, updateDiaryEntry, and deleteDiaryEntry. deleteDiaryEntry requires explicit user confirmation."
 	if workspaces.PerUser() {
 		return fmt.Sprintf(
 			"You are connected to a private, authenticated diary and file workspace with %s access. "+

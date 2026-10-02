@@ -81,6 +81,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	case cfg.Web.Enabled && cfg.Auth.Enabled:
 		app.web = web.New(web.Config{
 			Workspaces: workspaces,
+			Diary:      diarySvc,
 			Logger:     logger,
 		})
 	case cfg.Web.Enabled:
