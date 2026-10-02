@@ -6,21 +6,6 @@ export interface Me {
   scopes: string[]
 }
 
-export interface Entry {
-  name: string
-  path: string
-  is_dir: boolean
-  size: number
-  mode: string
-  mod_time: string
-}
-
-export interface Listing {
-  path: string
-  count: number
-  entries: Entry[]
-}
-
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -50,6 +35,3 @@ async function apiGet<T>(token: string, path: string): Promise<T> {
 }
 
 export const getMe = (token: string): Promise<Me> => apiGet<Me>(token, '/api/me')
-
-export const listFiles = (token: string, path = '.'): Promise<Listing> =>
-  apiGet<Listing>(token, `/api/files?path=${encodeURIComponent(path)}`)

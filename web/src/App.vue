@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { accessToken, beginLogin, completeLogin, signOut as clearSession } from './auth'
-import { getMe, listFiles, type Entry, type Me } from './api'
+import { getMe, type Me } from './api'
 
 const token = ref('')
 const me = ref<Me | null>(null)
-const entries = ref<Entry[]>([])
 const error = ref('')
 const loading = ref(false)
 
@@ -17,14 +16,11 @@ async function refresh(): Promise<void> {
   error.value = ''
   try {
     me.value = await getMe(token.value)
-    const listing = await listFiles(token.value)
-    entries.value = listing.entries
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
     clearSession()
     token.value = ''
     me.value = null
-    entries.value = []
   } finally {
     loading.value = false
   }
@@ -46,7 +42,6 @@ function signOut(): void {
   clearSession()
   token.value = ''
   me.value = null
-  entries.value = []
   error.value = ''
 }
 </script>
@@ -54,7 +49,7 @@ function signOut(): void {
 <template>
   <main>
     <h1>mcp-diary</h1>
-    <p class="hint">使用 Google 账号登录，查看你自己的工作区。</p>
+    <p class="hint">日记通过 MCP 客户端记录；此页面仅用于确认登录身份。</p>
 
     <div v-if="!token">
       <button @click="beginLogin">使用 Google 登录</button>
@@ -68,13 +63,16 @@ function signOut(): void {
     <p v-if="loading">加载中…</p>
 
     <section v-if="me">
-      <h2>工作区文件</h2>
-      <ul>
-        <li v-for="entry in entries" :key="entry.path">
-          {{ entry.is_dir ? '📁' : '📄' }} {{ entry.name }}
-        </li>
-      </ul>
-      <p v-if="entries.length === 0" class="hint">（空）</p>
+      <h2>身份信息</h2>
+      <dl>
+        <dt>用户</dt>
+        <dd>{{ me.username }}</dd>
+        <dt>Subject</dt>
+        <dd>{{ me.subject }}</dd>
+        <dt>Scopes</dt>
+        <dd>{{ me.scopes.join(', ') }}</dd>
+      </dl>
+      <p class="hint">日记数据请通过 MCP 工具（createDiarySession / commitDiarySession 等）读写。</p>
     </section>
   </main>
 </template>
@@ -100,6 +98,10 @@ h1 {
   margin-bottom: 0.25rem;
 }
 
+h2 {
+  margin-top: 2rem;
+}
+
 .hint {
   color: #888;
 }
@@ -112,6 +114,22 @@ h1 {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+dl {
+  margin: 0;
+}
+
+dt {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+}
+
+dd {
+  margin: 0.15rem 0 0;
 }
 
 button {
@@ -132,15 +150,5 @@ button:disabled {
 button.secondary {
   background: #eee;
   color: #333;
-}
-
-ul {
-  list-style: none;
-  padding: 0;
-}
-
-li {
-  padding: 0.35rem 0;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
 }
 </style>
