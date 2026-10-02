@@ -16,7 +16,6 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	diarytools "github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools/diary"
-	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools/fs"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
@@ -58,7 +57,6 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	diarySvc := diary.New(nil, nil)
 	registry := tools.NewRegistry()
 	registry.Add(diarytools.All(workspaces, diarySvc)...)
-	registry.Add(fs.All(workspaces)...)
 
 	app := &App{
 		cfg:        cfg,

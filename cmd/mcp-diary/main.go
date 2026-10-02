@@ -1,4 +1,4 @@
-// Command mcp-diary runs an MCP server that exposes a sandboxed file workspace
+// Command mcp-diary runs an MCP server that exposes diary session/entry tools
 // over the Streamable HTTP transport (or stdio).
 package main
 

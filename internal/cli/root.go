@@ -14,9 +14,9 @@ func NewRootCommand(version string) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "mcp-diary",
-		Short: "A Streamable HTTP MCP server for diary storage and sandboxed files",
+		Short: "A Streamable HTTP MCP server for diary storage",
 		Long: "mcp-diary is an MCP (Model Context Protocol) server that exposes diary\n" +
-			"session/entry tools and a sandboxed file workspace over Streamable HTTP (or stdio).",
+			"session/entry tools over Streamable HTTP (or stdio).",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

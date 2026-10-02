@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -93,37 +91,15 @@ func TestStreamableHTTPEndToEnd(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"read_file", "write_file", "append_file", "list_directory", "createDiarySession", "commitDiarySession", "listDiaryEntries"} {
+	for _, want := range []string{"createDiarySession", "appendDiarySession", "commitDiarySession", "getDiaryEntry", "listDiaryEntries"} {
 		if !names[want] {
 			t.Fatalf("tool %q not listed; got %v", want, names)
 		}
 	}
-
-	callTool(t, ctx, c, "write_file", map[string]any{
-		"path":    "diary/entry.txt",
-		"content": "first line",
-	})
-	callTool(t, ctx, c, "append_file", map[string]any{
-		"path":    "diary/entry.txt",
-		"content": "\nsecond line",
-	})
-
-	read := callTool(t, ctx, c, "read_file", map[string]any{"path": "diary/entry.txt"})
-	if got := textOf(read); !strings.Contains(got, "first line") || !strings.Contains(got, "second line") {
-		t.Fatalf("read_file text missing content: %s", got)
-	}
-
-	onDisk, err := os.ReadFile(filepath.Join(root, "diary", "entry.txt"))
-	if err != nil {
-		t.Fatalf("reading file on disk: %v", err)
-	}
-	if string(onDisk) != "first line\nsecond line" {
-		t.Fatalf("on-disk content = %q", onDisk)
-	}
-
-	list := callTool(t, ctx, c, "list_directory", map[string]any{"path": "diary"})
-	if got := textOf(list); !strings.Contains(got, "entry.txt") {
-		t.Fatalf("list_directory did not return entry.txt: %s", got)
+	for _, gone := range []string{"read_file", "write_file", "append_file", "list_directory", "create_directory", "delete_path", "file_info"} {
+		if names[gone] {
+			t.Fatalf("filesystem tool %q should have been removed; got %v", gone, names)
+		}
 	}
 }
 
