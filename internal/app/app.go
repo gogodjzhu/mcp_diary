@@ -11,6 +11,7 @@ import (
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
+	"github.com/gogodjzhu/mcp-diary/internal/core/sync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
@@ -26,6 +27,7 @@ type App struct {
 	logger     *slog.Logger
 	workspaces *workspace.Manager
 	registry   *tools.Registry
+	sync       *sync.Service
 
 	mcp   *mcp.Server
 	oauth *oauth.OAuth
@@ -63,6 +65,15 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("open workspace: %w", err)
 	}
 
+	codec, err := sync.NewCodec(cfg.Sync.EncryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("configure sync encryption: %w", err)
+	}
+	if cfg.Sync.EncryptionKey == "" {
+		logger.Warn("no sync encryption key configured; storage-medium credentials cannot be saved")
+	}
+	syncSvc := sync.New(codec, sync.NewRegistry(), nil)
+
 	registry := BuildRegistry(workspaces)
 
 	app := &App{
@@ -70,6 +81,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 		logger:     logger,
 		workspaces: workspaces,
 		registry:   registry,
+		sync:       syncSvc,
 		mcp:        mcp.New(cfg, workspaces, registry, logger),
 	}
 
@@ -120,6 +132,9 @@ func (a *App) ToolNames() []string { return a.registry.Names() }
 
 // Workspaces returns the workspace manager.
 func (a *App) Workspaces() *workspace.Manager { return a.workspaces }
+
+// Sync returns the storage-medium sync service.
+func (a *App) Sync() *sync.Service { return a.sync }
 
 // AuthEnabled reports whether OAuth authentication is active.
 func (a *App) AuthEnabled() bool { return a.cfg.Auth.Enabled }

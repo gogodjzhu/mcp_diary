@@ -21,6 +21,7 @@ var envBindings = []struct {
 	{"google-client-id", "GOOGLE_CLIENT_ID", func(c *config.Config, v string) { c.Auth.GoogleClientID = v }},
 	{"google-client-secret", "GOOGLE_CLIENT_SECRET", func(c *config.Config, v string) { c.Auth.GoogleClientSecret = v }},
 	{"auth-encryption-key", "AUTH_ENCRYPTION_KEY", func(c *config.Config, v string) { c.Auth.EncryptionKey = v }},
+	{"sync-encryption-key", "SYNC_ENCRYPTION_KEY", func(c *config.Config, v string) { c.Sync.EncryptionKey = v }},
 }
 
 // applyEnvFile loads KEY=VALUE pairs from a .env-style file into the process

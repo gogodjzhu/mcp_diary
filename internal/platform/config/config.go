@@ -3,8 +3,11 @@
 package config
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -55,6 +58,9 @@ type Config struct {
 	// Web configures the browser UI and REST API access layer.
 	Web WebConfig
 
+	// Sync encrypts storage-medium credentials at rest.
+	Sync SyncConfig
+
 	// Observability options.
 	LogLevel  string
 	LogFormat string
@@ -102,6 +108,14 @@ type AuthConfig struct {
 	// UsersDir is the directory, relative to Root unless absolute, where
 	// per-user workspaces are created.
 	UsersDir string
+}
+
+// SyncConfig holds the master key used to encrypt storage-medium credentials
+// (GitHub tokens, etc.) before they are written under each user sandbox.
+type SyncConfig struct {
+	// EncryptionKey is a 32-byte key, base64 or hex encoded, injected at
+	// deploy time. Empty refuses to persist credentials.
+	EncryptionKey string
 }
 
 // Default returns a Config populated with the built-in defaults.
@@ -167,10 +181,27 @@ func (c Config) Validate() error {
 	if err := c.Auth.validate(); err != nil {
 		return err
 	}
+	if err := c.Sync.validate(); err != nil {
+		return err
+	}
 	if c.Auth.Enabled && c.Transport != TransportStreamableHTTP {
 		return fmt.Errorf("authentication requires the %q transport", TransportStreamableHTTP)
 	}
 	return nil
+}
+
+func (s SyncConfig) validate() error {
+	key := strings.TrimSpace(s.EncryptionKey)
+	if key == "" {
+		return nil
+	}
+	if raw, err := base64.StdEncoding.DecodeString(key); err == nil && len(raw) == 32 {
+		return nil
+	}
+	if raw, err := hex.DecodeString(key); err == nil && len(raw) == 32 {
+		return nil
+	}
+	return fmt.Errorf("sync encryption key must be 32 bytes encoded as base64 or hex")
 }
 
 func (a AuthConfig) validate() error {

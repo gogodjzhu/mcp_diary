@@ -61,6 +61,19 @@ func TestAuthValidation(t *testing.T) {
 				enableAuth(c)
 			},
 		},
+		{
+			name: "invalid sync encryption key",
+			mutate: func(c *Config) {
+				c.Sync.EncryptionKey = "too-short"
+			},
+			wantErr: "sync encryption key",
+		},
+		{
+			name: "valid sync encryption key",
+			mutate: func(c *Config) {
+				c.Sync.EncryptionKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+			},
+		},
 	}
 
 	for _, tc := range cases {

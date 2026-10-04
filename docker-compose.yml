@@ -16,6 +16,7 @@ services:
       - --google-client-id=${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID in .env}
       - --google-client-secret=${GOOGLE_CLIENT_SECRET:?set GOOGLE_CLIENT_SECRET in .env}
       - --auth-encryption-key=${AUTH_ENCRYPTION_KEY:-}
+      - --sync-encryption-key=${SYNC_ENCRYPTION_KEY:-}
       - --web-enabled
     volumes:
       - mcp-diary-data:/data

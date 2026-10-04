@@ -17,6 +17,7 @@ func TestApplyEnvFile(t *testing.T) {
 		"GOOGLE_CLIENT_ID=\"id-1\"\n" +
 		"GOOGLE_CLIENT_SECRET='secret-1'\n" +
 		"AUTH_ENCRYPTION_KEY=key-1 # inline comment\n" +
+		"SYNC_ENCRYPTION_KEY=sync-key-1\n" +
 		"not a key value pair\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -36,6 +37,7 @@ func TestApplyEnvFile(t *testing.T) {
 		"GOOGLE_CLIENT_ID":     "id-1",
 		"GOOGLE_CLIENT_SECRET": "secret-1",
 		"AUTH_ENCRYPTION_KEY":  "key-1",
+		"SYNC_ENCRYPTION_KEY":  "sync-key-1",
 	} {
 		if got := os.Getenv(name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
@@ -52,6 +54,7 @@ func TestApplyEnvFileMissing(t *testing.T) {
 func TestApplyEnvFallbacks(t *testing.T) {
 	t.Setenv("MCP_PUBLIC_URL", "http://env-url")
 	t.Setenv("GOOGLE_CLIENT_ID", "env-id")
+	t.Setenv("SYNC_ENCRYPTION_KEY", "env-sync-key")
 
 	cfg := config.Default()
 	cmd := &cobra.Command{Use: "serve"}
@@ -60,6 +63,7 @@ func TestApplyEnvFallbacks(t *testing.T) {
 	cmd.Flags().StringVar(&cfg.Auth.GoogleClientID, "google-client-id", cfg.Auth.GoogleClientID, "")
 	cmd.Flags().StringVar(&cfg.Auth.GoogleClientSecret, "google-client-secret", cfg.Auth.GoogleClientSecret, "")
 	cmd.Flags().StringVar(&cfg.Auth.EncryptionKey, "auth-encryption-key", cfg.Auth.EncryptionKey, "")
+	cmd.Flags().StringVar(&cfg.Sync.EncryptionKey, "sync-encryption-key", cfg.Sync.EncryptionKey, "")
 	if err := cmd.Flags().Parse([]string{"--google-client-id=flag-id"}); err != nil {
 		t.Fatal(err)
 	}
@@ -74,5 +78,8 @@ func TestApplyEnvFallbacks(t *testing.T) {
 	}
 	if cfg.Auth.GoogleClientSecret != "" {
 		t.Errorf("GoogleClientSecret = %q, want empty when the env var is unset", cfg.Auth.GoogleClientSecret)
+	}
+	if cfg.Sync.EncryptionKey != "env-sync-key" {
+		t.Errorf("Sync.EncryptionKey = %q, want the env value", cfg.Sync.EncryptionKey)
 	}
 }

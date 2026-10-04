@@ -74,6 +74,7 @@ func newServeCommand(version string, logLevel, logFormat *string) *cobra.Command
 
 	flags.BoolVar(&cfg.Web.Enabled, "web-enabled", cfg.Web.Enabled, "serve the web UI and REST API (requires --auth-enabled)")
 	flags.StringVar(&cfg.Web.StaticDir, "web-static-dir", cfg.Web.StaticDir, "serve web assets from this directory instead of the embedded build (development)")
+	flags.StringVar(&cfg.Sync.EncryptionKey, "sync-encryption-key", cfg.Sync.EncryptionKey, "32-byte key (base64 or hex) encrypting storage-medium credentials at rest")
 
 	return cmd
 }
