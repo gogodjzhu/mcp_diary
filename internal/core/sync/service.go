@@ -9,16 +9,23 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 )
 
+type Runner interface {
+	SyncAll(ctx context.Context, fs *filesystem.Service, mediumID string) error
+}
+
 type Service struct {
 	now      func() time.Time
 	codec    *Codec
 	registry *Registry
+	runner   Runner
 
 	mu     stdsync.Mutex
 	stores map[string]*Store
 }
 
 func (s *Service) Registry() *Registry { return s.registry }
+
+func (s *Service) SetRunner(runner Runner) { s.runner = runner }
 
 func New(codec *Codec, registry *Registry, now func() time.Time) *Service {
 	if now == nil {
@@ -92,6 +99,69 @@ func (s *Service) State(ctx context.Context, fs *filesystem.Service, mediumID st
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
 		return nil, err
+	}
+	return st.GetState(ctx, mediumID)
+}
+
+func (s *Service) ListViews(ctx context.Context, fs *filesystem.Service) ([]MediumView, error) {
+	media, err := s.List(ctx, fs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MediumView, 0, len(media))
+	for _, m := range media {
+		st, err := s.State(ctx, fs, m.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, MediumView{PublicMedium: m, State: *st})
+	}
+	return out, nil
+}
+
+func (s *Service) Trigger(ctx context.Context, fs *filesystem.Service, mediumID string) (*SyncState, error) {
+	pub, err := s.Get(ctx, fs, mediumID)
+	if err != nil {
+		return nil, err
+	}
+	if !pub.Enabled {
+		st, stateErr := s.State(ctx, fs, mediumID)
+		if stateErr != nil {
+			return nil, stateErr
+		}
+		return st, ErrMediumDisabled
+	}
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return nil, err
+	}
+	if s.runner == nil {
+		if err := st.RecordFailure(ctx, mediumID, ErrEngineNotConfigured.Error()); err != nil {
+			return nil, err
+		}
+		state, stateErr := st.GetState(ctx, mediumID)
+		if stateErr != nil {
+			return nil, stateErr
+		}
+		return state, ErrEngineNotConfigured
+	}
+	if err := st.MarkSyncing(ctx, mediumID); err != nil {
+		return nil, err
+	}
+	if err := s.runner.SyncAll(ctx, fs, mediumID); err != nil {
+		if state, stateErr := st.GetState(ctx, mediumID); stateErr == nil && state.Status == StatusSyncing {
+			_ = st.RecordFailure(ctx, mediumID, err.Error())
+		}
+		state, stateErr := st.GetState(ctx, mediumID)
+		if stateErr != nil {
+			return nil, err
+		}
+		return state, err
+	}
+	if state, stateErr := st.GetState(ctx, mediumID); stateErr == nil && state.Status == StatusSyncing {
+		if err := st.RecordSuccess(ctx, mediumID); err != nil {
+			return nil, err
+		}
 	}
 	return st.GetState(ctx, mediumID)
 }

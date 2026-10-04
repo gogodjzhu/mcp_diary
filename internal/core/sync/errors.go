@@ -13,4 +13,6 @@ var (
 	ErrMediumIDRequired       = errors.New("medium id is required")
 	ErrMediumNameRequired     = errors.New("medium name is required")
 	ErrMediumKindRequired     = errors.New("medium kind is required")
+	ErrEngineNotConfigured    = errors.New("sync engine is not configured")
+	ErrMediumDisabled         = errors.New("storage medium is disabled")
 )

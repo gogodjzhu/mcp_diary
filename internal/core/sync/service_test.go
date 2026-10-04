@@ -255,6 +255,61 @@ func TestHexEncryptionKey(t *testing.T) {
 	}
 }
 
+func TestTriggerUsesEngineAndRecordsFailureWithoutOne(t *testing.T) {
+	svc, fs, _, _ := testService(t)
+	ctx := context.Background()
+	medium, err := svc.Upsert(ctx, fs, UpsertIn{Kind: KindGitHub, Name: "github", Credential: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := svc.Trigger(ctx, fs, medium.ID)
+	if !errors.Is(err, ErrEngineNotConfigured) {
+		t.Fatalf("err = %v, want ErrEngineNotConfigured", err)
+	}
+	if st == nil || st.Status != StatusFailed || st.LastError == "" {
+		t.Fatalf("state = %+v", st)
+	}
+
+	svc.SetRunner(funcRunner(func(context.Context, *filesystem.Service, string) error { return nil }))
+	st, err = svc.Trigger(ctx, fs, medium.ID)
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if st.Status != StatusSucceeded {
+		t.Fatalf("state after engine = %+v", st)
+	}
+
+	disabled := false
+	if _, err := svc.Upsert(ctx, fs, UpsertIn{ID: medium.ID, Name: "github", Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Trigger(ctx, fs, medium.ID); !errors.Is(err, ErrMediumDisabled) {
+		t.Fatalf("err = %v, want ErrMediumDisabled", err)
+	}
+}
+
+func TestListViewsIncludesState(t *testing.T) {
+	svc, fs, _, _ := testService(t)
+	ctx := context.Background()
+	if _, err := svc.Upsert(ctx, fs, UpsertIn{Kind: KindGitHub, Name: "github", Credential: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	views, err := svc.ListViews(ctx, fs)
+	if err != nil {
+		t.Fatalf("ListViews: %v", err)
+	}
+	if len(views) != 1 || views[0].State.Status != StatusIdle {
+		t.Fatalf("views = %+v", views)
+	}
+}
+
+type funcRunner func(context.Context, *filesystem.Service, string) error
+
+func (f funcRunner) SyncAll(ctx context.Context, fs *filesystem.Service, mediumID string) error {
+	return f(ctx, fs, mediumID)
+}
+
 func TestUnknownKindAndInvalidKey(t *testing.T) {
 	if _, err := NewCodec("too-short"); !errors.Is(err, ErrInvalidKey) {
 		t.Fatalf("NewCodec err = %v", err)
