@@ -27,7 +27,9 @@ type App struct {
 	logger     *slog.Logger
 	workspaces *workspace.Manager
 	registry   *tools.Registry
+	diary      *diary.Service
 	sync       *sync.Service
+	engine     *sync.Engine
 
 	mcp   *mcp.Server
 	oauth *oauth.OAuth
@@ -37,9 +39,12 @@ type App struct {
 // BuildRegistry assembles the MCP tool registry bound to the given workspaces.
 // It is shared by the server assembly and the CLI `tools` listing command so
 // both always expose the same tool set.
-func BuildRegistry(workspaces *workspace.Manager) *tools.Registry {
+func BuildRegistry(workspaces *workspace.Manager, diarySvc *diary.Service) *tools.Registry {
+	if diarySvc == nil {
+		diarySvc = diary.New(nil, nil)
+	}
 	registry := tools.NewRegistry()
-	registry.Add(diarytools.All(workspaces, diary.New(nil, nil))...)
+	registry.Add(diarytools.All(workspaces, diarySvc)...)
 	return registry
 }
 
@@ -72,17 +77,23 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	if cfg.Sync.EncryptionKey == "" {
 		logger.Warn("no sync encryption key configured; storage-medium credentials cannot be saved")
 	}
-	syncSvc := sync.New(codec, sync.NewRegistry(), nil)
+	registry := sync.NewRegistry()
+	registry.Register(sync.KindGitHub, sync.GitHubFactory(nil, nil))
+	syncSvc := sync.New(codec, registry, nil)
+	diarySvc := diary.New(nil, nil)
+	engine := sync.NewEngine(syncSvc, diarySvc, sync.DefaultDebounce, nil, logger)
 
-	registry := BuildRegistry(workspaces)
+	toolRegistry := BuildRegistry(workspaces, diarySvc)
 
 	app := &App{
 		cfg:        cfg,
 		logger:     logger,
 		workspaces: workspaces,
-		registry:   registry,
+		registry:   toolRegistry,
+		diary:      diarySvc,
 		sync:       syncSvc,
-		mcp:        mcp.New(cfg, workspaces, registry, logger),
+		engine:     engine,
+		mcp:        mcp.New(cfg, workspaces, toolRegistry, logger),
 	}
 
 	if cfg.Auth.Enabled {
@@ -110,7 +121,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 		"per_user_workspaces", workspaces.PerUser(),
 		"users_dir", workspaces.UsersDir(),
 		"web_enabled", app.web != nil,
-		"tools", registry.Names(),
+		"tools", toolRegistry.Names(),
 	)
 
 	return app, nil
@@ -118,6 +129,9 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 
 // Close releases resources owned by the application.
 func (a *App) Close() error {
+	if a.engine != nil {
+		a.engine.Stop()
+	}
 	if a.oauth != nil {
 		return a.oauth.Close()
 	}
@@ -135,6 +149,12 @@ func (a *App) Workspaces() *workspace.Manager { return a.workspaces }
 
 // Sync returns the storage-medium sync service.
 func (a *App) Sync() *sync.Service { return a.sync }
+
+// Engine returns the diary-to-medium sync scheduler.
+func (a *App) Engine() *sync.Engine { return a.engine }
+
+// Diary returns the diary domain service.
+func (a *App) Diary() *diary.Service { return a.diary }
 
 // AuthEnabled reports whether OAuth authentication is active.
 func (a *App) AuthEnabled() bool { return a.cfg.Auth.Enabled }

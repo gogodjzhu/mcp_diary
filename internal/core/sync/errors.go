@@ -13,4 +13,8 @@ var (
 	ErrMediumIDRequired       = errors.New("medium id is required")
 	ErrMediumNameRequired     = errors.New("medium name is required")
 	ErrMediumKindRequired     = errors.New("medium kind is required")
+	ErrGitHubRepoRequired     = errors.New("github medium requires owner and repo; use a fine-grained PAT with Contents read/write on that repository only")
+	ErrGitHubCredential       = errors.New("github medium requires a personal access token")
+	ErrEngineStopped          = errors.New("sync engine stopped")
+	ErrInvalidMonth           = errors.New("invalid diary month")
 )

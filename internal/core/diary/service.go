@@ -20,9 +20,12 @@ const (
 
 var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+type ChangeHook func(fs *filesystem.Service, dates ...string)
+
 type Service struct {
-	now func() time.Time
-	loc *time.Location
+	now  func() time.Time
+	loc  *time.Location
+	hook ChangeHook
 
 	mu     sync.Mutex
 	stores map[string]*Store
@@ -40,6 +43,17 @@ func New(now func() time.Time, loc *time.Location) *Service {
 		loc:    loc,
 		stores: map[string]*Store{},
 	}
+}
+
+func (s *Service) SetChangeHook(h ChangeHook) {
+	s.hook = h
+}
+
+func (s *Service) emitChange(fs *filesystem.Service, dates ...string) {
+	if s.hook == nil || fs == nil {
+		return
+	}
+	s.hook(fs, dates...)
 }
 
 // storeFor returns the persisted store for the workspace behind fs, loading it
@@ -253,13 +267,14 @@ func (s *Service) CommitSession(ctx context.Context, fs *filesystem.Service, in 
 		return nil, wrapInternal(err)
 	}
 	st.mu.Lock()
-	defer st.mu.Unlock()
 
 	if cached, ok := replay(st, in.RequestID); ok {
+		st.mu.Unlock()
 		return cached, nil
 	}
 	sess, err := requireDraft(st, in.SessionID, in.ExpectedRevision)
 	if err != nil {
+		st.mu.Unlock()
 		return nil, err
 	}
 	now := st.now().In(s.loc)
@@ -287,8 +302,12 @@ func (s *Service) CommitSession(ctx context.Context, fs *filesystem.Service, in 
 		"updated_at": entry.UpdatedAt,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
+		st.mu.Unlock()
 		return nil, err
 	}
+	date := entry.DiaryDate
+	st.mu.Unlock()
+	s.emitChange(fs, date)
 	return out, nil
 }
 
@@ -384,16 +403,18 @@ func (s *Service) UpdateEntry(ctx context.Context, fs *filesystem.Service, in Up
 		return nil, wrapInternal(err)
 	}
 	st.mu.Lock()
-	defer st.mu.Unlock()
 
 	if cached, ok := replay(st, in.RequestID); ok {
+		st.mu.Unlock()
 		return cached, nil
 	}
 	entry := st.data.Entries[in.EntryID]
 	if entry == nil {
+		st.mu.Unlock()
 		return nil, errf(codeNotFound, "entry %s not found", in.EntryID)
 	}
 	if entry.Revision != in.ExpectedRevision {
+		st.mu.Unlock()
 		return nil, errf(codeConflict, "revision conflict")
 	}
 	entry.Content = in.Content
@@ -405,8 +426,12 @@ func (s *Service) UpdateEntry(ctx context.Context, fs *filesystem.Service, in Up
 		"updated_at": entry.UpdatedAt,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
+		st.mu.Unlock()
 		return nil, err
 	}
+	date := entry.DiaryDate
+	st.mu.Unlock()
+	s.emitChange(fs, date)
 	return out, nil
 }
 
@@ -506,18 +531,21 @@ func (s *Service) DeleteEntry(ctx context.Context, fs *filesystem.Service, in De
 		return nil, wrapInternal(err)
 	}
 	st.mu.Lock()
-	defer st.mu.Unlock()
 
 	if cached, ok := replay(st, in.RequestID); ok {
+		st.mu.Unlock()
 		return cached, nil
 	}
 	entry := st.data.Entries[in.EntryID]
 	if entry == nil {
+		st.mu.Unlock()
 		return nil, errf(codeNotFound, "entry %s not found", in.EntryID)
 	}
 	if entry.Revision != in.ExpectedRevision {
+		st.mu.Unlock()
 		return nil, errf(codeConflict, "revision conflict")
 	}
+	date := entry.DiaryDate
 	delete(st.data.Entries, in.EntryID)
 	if st.data.DateEntries[entry.DiaryDate] == in.EntryID {
 		delete(st.data.DateEntries, entry.DiaryDate)
@@ -527,7 +555,28 @@ func (s *Service) DeleteEntry(ctx context.Context, fs *filesystem.Service, in De
 		"deleted":  true,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
+		st.mu.Unlock()
 		return nil, err
+	}
+	st.mu.Unlock()
+	s.emitChange(fs, date)
+	return out, nil
+}
+
+func (s *Service) ListCommitted(ctx context.Context, fs *filesystem.Service) ([]Entry, error) {
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return nil, wrapInternal(err)
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	all := st.listEntries("", "")
+	out := make([]Entry, 0, len(all))
+	for _, e := range all {
+		if e == nil {
+			continue
+		}
+		out = append(out, *e)
 	}
 	return out, nil
 }

@@ -96,6 +96,14 @@ func (s *Service) State(ctx context.Context, fs *filesystem.Service, mediumID st
 	return st.GetState(ctx, mediumID)
 }
 
+func (s *Service) RecordFailure(ctx context.Context, fs *filesystem.Service, mediumID, message string) error {
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return err
+	}
+	return st.RecordFailure(ctx, mediumID, message)
+}
+
 func (s *Service) Push(ctx context.Context, fs *filesystem.Service, mediumID string, doc Document) (Result, error) {
 	if doc.Kind == DocumentAttachment {
 		return Result{}, ErrAttachmentNotSupported

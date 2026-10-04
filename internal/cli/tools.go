@@ -28,7 +28,7 @@ func newToolsCommand() *cobra.Command {
 				return err
 			}
 
-			registry := app.BuildRegistry(workspaces)
+			registry := app.BuildRegistry(workspaces, nil)
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tDESCRIPTION")
