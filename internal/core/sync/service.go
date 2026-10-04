@@ -18,6 +18,8 @@ type Service struct {
 	stores map[string]*Store
 }
 
+func (s *Service) Registry() *Registry { return s.registry }
+
 func New(codec *Codec, registry *Registry, now func() time.Time) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now() }
