@@ -17,4 +17,6 @@ var (
 	ErrGitHubCredential       = errors.New("github medium requires a personal access token")
 	ErrEngineStopped          = errors.New("sync engine stopped")
 	ErrInvalidMonth           = errors.New("invalid diary month")
+	ErrEngineNotConfigured    = errors.New("sync engine is not configured")
+	ErrMediumDisabled         = errors.New("storage medium is disabled")
 )

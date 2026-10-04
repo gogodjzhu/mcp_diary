@@ -157,6 +157,11 @@ type SyncState struct {
 	Documents    map[string]DocumentState `json:"documents,omitempty"`
 }
 
+type MediumView struct {
+	PublicMedium
+	State SyncState `json:"state"`
+}
+
 func cloneSettings(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return map[string]string{}

@@ -339,6 +339,15 @@ func (s *Store) MarkSyncing(ctx context.Context, mediumID string) error {
 	})
 }
 
+func (s *Store) RecordSuccess(ctx context.Context, mediumID string) error {
+	return s.mutateState(ctx, mediumID, func(st *SyncState) {
+		st.Status = StatusSucceeded
+		st.LastError = ""
+		synced := s.now()
+		st.LastSyncedAt = &synced
+	})
+}
+
 func (s *Store) mutateState(ctx context.Context, mediumID string, fn func(*SyncState)) error {
 	if err := ctx.Err(); err != nil {
 		return err
