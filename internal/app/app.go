@@ -11,7 +11,8 @@ import (
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
-	"github.com/gogodjzhu/mcp-diary/internal/core/sync"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diarymeta"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
@@ -28,8 +29,8 @@ type App struct {
 	workspaces *workspace.Manager
 	registry   *tools.Registry
 	diary      *diary.Service
-	sync       *sync.Service
-	engine     *sync.Engine
+	sync       *diarysync.Service
+	engine     *diarysync.Engine
 
 	mcp   *mcp.Server
 	oauth *oauth.OAuth
@@ -38,14 +39,18 @@ type App struct {
 
 // BuildRegistry assembles the MCP tool registry bound to the given workspaces.
 // It is shared by the server assembly and the CLI `tools` listing command so
-// both always expose the same tool set.
-func BuildRegistry(workspaces *workspace.Manager, diarySvc *diary.Service) *tools.Registry {
+// both always expose the same tool set. Both dependencies are required: a nil
+// value is a wiring bug, not something to paper over with a throwaway service.
+func BuildRegistry(workspaces *workspace.Manager, diarySvc *diary.Service) (*tools.Registry, error) {
+	if workspaces == nil {
+		return nil, fmt.Errorf("workspace manager is required")
+	}
 	if diarySvc == nil {
-		diarySvc = diary.New(nil, nil)
+		return nil, fmt.Errorf("diary service is required")
 	}
 	registry := tools.NewRegistry()
 	registry.Add(diarytools.All(workspaces, diarySvc)...)
-	return registry
+	return registry, nil
 }
 
 // New builds the application: it opens the workspace root, optionally wires the
@@ -70,20 +75,26 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("open workspace: %w", err)
 	}
 
-	codec, err := sync.NewCodec(cfg.Sync.EncryptionKey)
+	codec, err := diarysync.NewCodec(cfg.Sync.EncryptionKey)
 	if err != nil {
 		return nil, fmt.Errorf("configure sync encryption: %w", err)
 	}
 	if cfg.Sync.EncryptionKey == "" {
 		logger.Warn("no sync encryption key configured; storage-medium credentials cannot be saved")
 	}
-	registry := sync.NewRegistry()
-	registry.Register(sync.KindGitHub, sync.GitHubFactory(nil, nil))
-	syncSvc := sync.New(codec, registry, nil)
+	registry := diarysync.NewRegistry()
+	registry.Register(diarysync.KindGitHub, diarysync.GitHubFactory(nil, nil))
+	syncSvc := diarysync.New(codec, registry, nil)
 	diarySvc := diary.New(nil, nil)
-	engine := sync.NewEngine(syncSvc, diarySvc, sync.DefaultDebounce, nil, logger)
+	metaSvc := diarymeta.New()
+	diarySvc.SetMetaEnricher(diarymeta.NewEnricher(metaSvc, diarymeta.NewWeatherClient(nil), logger))
+	engine := diarysync.NewEngine(syncSvc, diarySvc, diarysync.DefaultDebounce, nil, logger)
+	syncSvc.SetRunner(engine)
 
-	toolRegistry := BuildRegistry(workspaces, diarySvc)
+	toolRegistry, err := BuildRegistry(workspaces, diarySvc)
+	if err != nil {
+		return nil, fmt.Errorf("build tool registry: %w", err)
+	}
 
 	app := &App{
 		cfg:        cfg,
@@ -111,6 +122,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 			Logger:     logger,
 			Workspaces: workspaces,
 			Sync:       syncSvc,
+			Meta:       metaSvc,
 		})
 	case cfg.Web.Enabled:
 		logger.Warn("web UI is enabled but authentication is disabled; web routes are not registered")
@@ -134,10 +146,18 @@ func (a *App) Close() error {
 	if a.engine != nil {
 		a.engine.Stop()
 	}
+	var first error
 	if a.oauth != nil {
-		return a.oauth.Close()
+		if err := a.oauth.Close(); err != nil {
+			first = err
+		}
 	}
-	return nil
+	if a.workspaces != nil {
+		if err := a.workspaces.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // MCPServer returns the underlying MCP server.
@@ -150,10 +170,10 @@ func (a *App) ToolNames() []string { return a.registry.Names() }
 func (a *App) Workspaces() *workspace.Manager { return a.workspaces }
 
 // Sync returns the storage-medium sync service.
-func (a *App) Sync() *sync.Service { return a.sync }
+func (a *App) Sync() *diarysync.Service { return a.sync }
 
 // Engine returns the diary-to-medium sync scheduler.
-func (a *App) Engine() *sync.Engine { return a.engine }
+func (a *App) Engine() *diarysync.Engine { return a.engine }
 
 // Diary returns the diary domain service.
 func (a *App) Diary() *diary.Service { return a.diary }

@@ -1,4 +1,4 @@
-package sync
+package diarysync
 
 import (
 	"bytes"
@@ -161,11 +161,69 @@ func (p *GitHubProvider) Status(ctx context.Context, ref DocumentRef) (RemoteSta
 	return RemoteStatus{Path: path, Exists: true, RemoteID: existing.SHA, UpdatedAt: p.now()}, nil
 }
 
+// Get returns the decoded body of the remote file. The GitHub Contents API
+// inlines the body as base64 in "content"; for files larger than 1 MiB it is
+// omitted and we fall back to "download_url".
+func (p *GitHubProvider) Get(ctx context.Context, ref DocumentRef) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if ref.Kind == DocumentAttachment {
+		return nil, false, ErrAttachmentNotSupported
+	}
+	path := strings.TrimPrefix(ref.Path, "/")
+	file, err := p.getFile(ctx, path)
+	if err != nil {
+		return nil, false, err
+	}
+	if file == nil {
+		return nil, false, nil
+	}
+	if file.Content != "" {
+		raw := strings.ReplaceAll(file.Content, "\n", "")
+		decoded, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return nil, false, err
+		}
+		return decoded, true, nil
+	}
+	if file.DownloadURL != "" {
+		body, err := p.getRaw(ctx, file.DownloadURL)
+		if err != nil {
+			return nil, false, err
+		}
+		return body, true, nil
+	}
+	return []byte{}, true, nil
+}
+
+// getRaw downloads a raw file body (used for over-sized contents responses).
+func (p *GitHubProvider) getRaw(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	p.auth(req)
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, githubAPIError(resp)
+	}
+	return io.ReadAll(resp.Body)
+}
+
 type githubFile struct {
-	SHA     string `json:"sha"`
-	Content string `json:"content"`
-	Name    string `json:"name"`
-	Path    string `json:"path"`
+	SHA         string `json:"sha"`
+	Content     string `json:"content"`
+	DownloadURL string `json:"download_url"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
 }
 
 type githubContentResponse struct {

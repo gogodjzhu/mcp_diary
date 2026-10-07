@@ -1,8 +1,8 @@
-package sync
+package diarysync
 
 import (
 	"context"
-	stdsync "sync"
+	"sync"
 	"time"
 )
 
@@ -10,7 +10,7 @@ type MemoryProvider struct {
 	kind Kind
 	now  func() time.Time
 
-	mu    stdsync.Mutex
+	mu    sync.Mutex
 	files map[string]memoryFile
 }
 
@@ -84,6 +84,22 @@ func (p *MemoryProvider) Status(ctx context.Context, ref DocumentRef) (RemoteSta
 		return RemoteStatus{Path: ref.Path, Exists: false}, nil
 	}
 	return RemoteStatus{Path: ref.Path, Exists: true, RemoteID: f.remoteID, UpdatedAt: f.updatedAt}, nil
+}
+
+func (p *MemoryProvider) Get(ctx context.Context, ref DocumentRef) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if ref.Kind == DocumentAttachment {
+		return nil, false, ErrAttachmentNotSupported
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	f, ok := p.files[ref.Path]
+	if !ok {
+		return nil, false, nil
+	}
+	return append([]byte(nil), f.body...), true, nil
 }
 
 func (p *MemoryProvider) Body(path string) []byte {

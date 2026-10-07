@@ -3,6 +3,7 @@ module github.com/gogodjzhu/mcp-diary
 go 1.26.0
 
 require (
+	github.com/6tail/lunar-go v1.4.6
 	github.com/giantswarm/mcp-oauth v1.4.13
 	github.com/mark3labs/mcp-go v1.0.0
 	github.com/spf13/cobra v1.10.2

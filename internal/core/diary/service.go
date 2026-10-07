@@ -2,6 +2,7 @@ package diary
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"sync"
@@ -22,10 +23,18 @@ var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 type ChangeHook func(fs *filesystem.Service, dates ...string)
 
+// MetaEnricher attaches derived metadata (lunar date, weekday, weather) to a
+// newly committed entry. It must be best-effort: an empty or partial result is
+// always acceptable.
+type MetaEnricher interface {
+	Enrich(ctx context.Context, fs *filesystem.Service, date string) EntryMeta
+}
+
 type Service struct {
 	now  func() time.Time
 	loc  *time.Location
 	hook ChangeHook
+	meta MetaEnricher
 
 	mu     sync.Mutex
 	stores map[string]*Store
@@ -47,6 +56,11 @@ func New(now func() time.Time, loc *time.Location) *Service {
 
 func (s *Service) SetChangeHook(h ChangeHook) {
 	s.hook = h
+}
+
+// SetMetaEnricher installs the metadata resolver used when committing entries.
+func (s *Service) SetMetaEnricher(m MetaEnricher) {
+	s.meta = m
 }
 
 func (s *Service) emitChange(fs *filesystem.Service, dates ...string) {
@@ -81,7 +95,7 @@ type CreateSessionIn struct {
 	DiaryDate string
 }
 
-func (s *Service) CreateSession(ctx context.Context, fs *filesystem.Service, in CreateSessionIn) (any, error) {
+func (s *Service) CreateSession(ctx context.Context, fs *filesystem.Service, in CreateSessionIn) (*Session, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
@@ -96,7 +110,10 @@ func (s *Service) CreateSession(ctx context.Context, fs *filesystem.Service, in 
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached *Session
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		return nil, err
+	} else if ok {
 		return cached, nil
 	}
 	if entryID, ok := st.data.DateEntries[date]; ok {
@@ -125,7 +142,7 @@ func (s *Service) CreateSession(ctx context.Context, fs *filesystem.Service, in 
 	}
 	st.data.Sessions[sess.SessionID] = sess
 	st.data.DateSessions[date] = sess.SessionID
-	if err := remember(ctx, st, in.RequestID, cloneSession(sess)); err != nil {
+	if err := remember(ctx, st, in.RequestID, sess); err != nil {
 		return nil, err
 	}
 	return cloneSession(sess), nil
@@ -138,38 +155,41 @@ type AppendSessionIn struct {
 	Content          string
 }
 
-func (s *Service) AppendSession(ctx context.Context, fs *filesystem.Service, in AppendSessionIn) (any, error) {
+func (s *Service) AppendSession(ctx context.Context, fs *filesystem.Service, in AppendSessionIn) (SessionContent, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
-		return nil, err
+		return SessionContent{}, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
-		return nil, errf(codeBadRequest, "session_id is required")
+		return SessionContent{}, errf(codeBadRequest, "session_id is required")
 	}
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
-		return nil, wrapInternal(err)
+		return SessionContent{}, wrapInternal(err)
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached SessionContent
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		return SessionContent{}, err
+	} else if ok {
 		return cached, nil
 	}
 	sess, err := requireDraft(st, in.SessionID, in.ExpectedRevision)
 	if err != nil {
-		return nil, err
+		return SessionContent{}, err
 	}
 	sess.Content = joinContent(sess.Content, in.Content)
 	sess.Revision++
 	sess.UpdatedAt = st.now().In(s.loc)
-	out := map[string]any{
-		"session_id": sess.SessionID,
-		"revision":   sess.Revision,
-		"content":    sess.Content,
-		"updated_at": sess.UpdatedAt,
+	out := SessionContent{
+		SessionID: sess.SessionID,
+		Revision:  sess.Revision,
+		Content:   sess.Content,
+		UpdatedAt: sess.UpdatedAt,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
-		return nil, err
+		return SessionContent{}, err
 	}
 	return out, nil
 }
@@ -179,7 +199,7 @@ type GetSessionIn struct {
 	SessionID string
 }
 
-func (s *Service) GetSession(ctx context.Context, fs *filesystem.Service, in GetSessionIn) (any, error) {
+func (s *Service) GetSession(ctx context.Context, fs *filesystem.Service, in GetSessionIn) (*Session, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
@@ -193,7 +213,10 @@ func (s *Service) GetSession(ctx context.Context, fs *filesystem.Service, in Get
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached *Session
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		return nil, err
+	} else if ok {
 		return cached, nil
 	}
 	sess := cloneSession(st.data.Sessions[in.SessionID])
@@ -213,38 +236,41 @@ type UpdateSessionIn struct {
 	Content          string
 }
 
-func (s *Service) UpdateSession(ctx context.Context, fs *filesystem.Service, in UpdateSessionIn) (any, error) {
+func (s *Service) UpdateSession(ctx context.Context, fs *filesystem.Service, in UpdateSessionIn) (SessionContent, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
-		return nil, err
+		return SessionContent{}, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
-		return nil, errf(codeBadRequest, "session_id is required")
+		return SessionContent{}, errf(codeBadRequest, "session_id is required")
 	}
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
-		return nil, wrapInternal(err)
+		return SessionContent{}, wrapInternal(err)
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached SessionContent
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		return SessionContent{}, err
+	} else if ok {
 		return cached, nil
 	}
 	sess, err := requireDraft(st, in.SessionID, in.ExpectedRevision)
 	if err != nil {
-		return nil, err
+		return SessionContent{}, err
 	}
 	sess.Content = in.Content
 	sess.Revision++
 	sess.UpdatedAt = st.now().In(s.loc)
-	out := map[string]any{
-		"session_id": sess.SessionID,
-		"revision":   sess.Revision,
-		"content":    sess.Content,
-		"updated_at": sess.UpdatedAt,
+	out := SessionContent{
+		SessionID: sess.SessionID,
+		Revision:  sess.Revision,
+		Content:   sess.Content,
+		UpdatedAt: sess.UpdatedAt,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
-		return nil, err
+		return SessionContent{}, err
 	}
 	return out, nil
 }
@@ -255,27 +281,31 @@ type CommitSessionIn struct {
 	ExpectedRevision int
 }
 
-func (s *Service) CommitSession(ctx context.Context, fs *filesystem.Service, in CommitSessionIn) (any, error) {
+func (s *Service) CommitSession(ctx context.Context, fs *filesystem.Service, in CommitSessionIn) (CommittedEntry, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
-		return nil, err
+		return CommittedEntry{}, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
-		return nil, errf(codeBadRequest, "session_id is required")
+		return CommittedEntry{}, errf(codeBadRequest, "session_id is required")
 	}
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
-		return nil, wrapInternal(err)
+		return CommittedEntry{}, wrapInternal(err)
 	}
 	st.mu.Lock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached CommittedEntry
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		st.mu.Unlock()
+		return CommittedEntry{}, err
+	} else if ok {
 		st.mu.Unlock()
 		return cached, nil
 	}
 	sess, err := requireDraft(st, in.SessionID, in.ExpectedRevision)
 	if err != nil {
 		st.mu.Unlock()
-		return nil, err
+		return CommittedEntry{}, err
 	}
 	now := st.now().In(s.loc)
 	entry := &Entry{
@@ -287,23 +317,28 @@ func (s *Service) CommitSession(ctx context.Context, fs *filesystem.Service, in 
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	if s.meta != nil {
+		meta := s.meta.Enrich(ctx, fs, entry.DiaryDate)
+		entry.Meta = &meta
+	}
 	st.data.Entries[entry.EntryID] = entry
 	st.data.DateEntries[entry.DiaryDate] = entry.EntryID
 	delete(st.data.Sessions, sess.SessionID)
 	delete(st.data.DateSessions, sess.DiaryDate)
 
-	out := map[string]any{
-		"entry_id":   entry.EntryID,
-		"session_id": sess.SessionID,
-		"diary_date": entry.DiaryDate,
-		"content":    entry.Content,
-		"status":     StatusCommitted,
-		"created_at": entry.CreatedAt,
-		"updated_at": entry.UpdatedAt,
+	out := CommittedEntry{
+		EntryID:   entry.EntryID,
+		SessionID: sess.SessionID,
+		DiaryDate: entry.DiaryDate,
+		Content:   entry.Content,
+		Status:    StatusCommitted,
+		Meta:      entry.Meta,
+		CreatedAt: entry.CreatedAt,
+		UpdatedAt: entry.UpdatedAt,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		st.mu.Unlock()
-		return nil, err
+		return CommittedEntry{}, err
 	}
 	date := entry.DiaryDate
 	st.mu.Unlock()
@@ -317,37 +352,40 @@ type DiscardSessionIn struct {
 	ExpectedRevision int
 }
 
-func (s *Service) DiscardSession(ctx context.Context, fs *filesystem.Service, in DiscardSessionIn) (any, error) {
+func (s *Service) DiscardSession(ctx context.Context, fs *filesystem.Service, in DiscardSessionIn) (DiscardedSession, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
-		return nil, err
+		return DiscardedSession{}, err
 	}
 	if strings.TrimSpace(in.SessionID) == "" {
-		return nil, errf(codeBadRequest, "session_id is required")
+		return DiscardedSession{}, errf(codeBadRequest, "session_id is required")
 	}
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
-		return nil, wrapInternal(err)
+		return DiscardedSession{}, wrapInternal(err)
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached DiscardedSession
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		return DiscardedSession{}, err
+	} else if ok {
 		return cached, nil
 	}
 	sess, err := requireDraft(st, in.SessionID, in.ExpectedRevision)
 	if err != nil {
-		return nil, err
+		return DiscardedSession{}, err
 	}
 	now := st.now().In(s.loc)
 	delete(st.data.Sessions, sess.SessionID)
 	delete(st.data.DateSessions, sess.DiaryDate)
-	out := map[string]any{
-		"session_id": sess.SessionID,
-		"status":     StatusDiscarded,
-		"updated_at": now,
+	out := DiscardedSession{
+		SessionID: sess.SessionID,
+		Status:    StatusDiscarded,
+		UpdatedAt: now,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
-		return nil, err
+		return DiscardedSession{}, err
 	}
 	return out, nil
 }
@@ -357,7 +395,7 @@ type GetEntryIn struct {
 	EntryID   string
 }
 
-func (s *Service) GetEntry(ctx context.Context, fs *filesystem.Service, in GetEntryIn) (any, error) {
+func (s *Service) GetEntry(ctx context.Context, fs *filesystem.Service, in GetEntryIn) (*Entry, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
 		return nil, err
 	}
@@ -371,7 +409,10 @@ func (s *Service) GetEntry(ctx context.Context, fs *filesystem.Service, in GetEn
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached *Entry
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		return nil, err
+	} else if ok {
 		return cached, nil
 	}
 	entry := cloneEntry(st.data.Entries[in.EntryID])
@@ -391,43 +432,47 @@ type UpdateEntryIn struct {
 	Content          string
 }
 
-func (s *Service) UpdateEntry(ctx context.Context, fs *filesystem.Service, in UpdateEntryIn) (any, error) {
+func (s *Service) UpdateEntry(ctx context.Context, fs *filesystem.Service, in UpdateEntryIn) (EntryRevision, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
-		return nil, err
+		return EntryRevision{}, err
 	}
 	if strings.TrimSpace(in.EntryID) == "" {
-		return nil, errf(codeBadRequest, "entry_id is required")
+		return EntryRevision{}, errf(codeBadRequest, "entry_id is required")
 	}
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
-		return nil, wrapInternal(err)
+		return EntryRevision{}, wrapInternal(err)
 	}
 	st.mu.Lock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached EntryRevision
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		st.mu.Unlock()
+		return EntryRevision{}, err
+	} else if ok {
 		st.mu.Unlock()
 		return cached, nil
 	}
 	entry := st.data.Entries[in.EntryID]
 	if entry == nil {
 		st.mu.Unlock()
-		return nil, errf(codeNotFound, "entry %s not found", in.EntryID)
+		return EntryRevision{}, errf(codeNotFound, "entry %s not found", in.EntryID)
 	}
 	if entry.Revision != in.ExpectedRevision {
 		st.mu.Unlock()
-		return nil, errf(codeConflict, "revision conflict")
+		return EntryRevision{}, errf(codeConflict, "revision conflict")
 	}
 	entry.Content = in.Content
 	entry.Revision++
 	entry.UpdatedAt = st.now().In(s.loc)
-	out := map[string]any{
-		"entry_id":   entry.EntryID,
-		"revision":   entry.Revision,
-		"updated_at": entry.UpdatedAt,
+	out := EntryRevision{
+		EntryID:   entry.EntryID,
+		Revision:  entry.Revision,
+		UpdatedAt: entry.UpdatedAt,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		st.mu.Unlock()
-		return nil, err
+		return EntryRevision{}, err
 	}
 	date := entry.DiaryDate
 	st.mu.Unlock()
@@ -443,18 +488,18 @@ type ListEntriesIn struct {
 	PageSize      int
 }
 
-func (s *Service) ListEntries(ctx context.Context, fs *filesystem.Service, in ListEntriesIn) (any, error) {
+func (s *Service) ListEntries(ctx context.Context, fs *filesystem.Service, in ListEntriesIn) (EntryList, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
-		return nil, err
+		return EntryList{}, err
 	}
 	if in.DiaryDateFrom != "" {
 		if _, err := parseDate(in.DiaryDateFrom); err != nil {
-			return nil, err
+			return EntryList{}, err
 		}
 	}
 	if in.DiaryDateTo != "" {
 		if _, err := parseDate(in.DiaryDateTo); err != nil {
-			return nil, err
+			return EntryList{}, err
 		}
 	}
 	page := in.Page
@@ -471,12 +516,15 @@ func (s *Service) ListEntries(ctx context.Context, fs *filesystem.Service, in Li
 
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
-		return nil, wrapInternal(err)
+		return EntryList{}, wrapInternal(err)
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached EntryList
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		return EntryList{}, err
+	} else if ok {
 		return cached, nil
 	}
 
@@ -491,24 +539,25 @@ func (s *Service) ListEntries(ctx context.Context, fs *filesystem.Service, in Li
 		end = total
 	}
 	items := all[start:end]
-	summaries := make([]map[string]any, 0, len(items))
+	summaries := make([]EntrySummary, 0, len(items))
 	for _, e := range items {
-		summaries = append(summaries, map[string]any{
-			"entry_id":   e.EntryID,
-			"diary_date": e.DiaryDate,
-			"content":    e.Content,
-			"created_at": e.CreatedAt,
-			"updated_at": e.UpdatedAt,
+		summaries = append(summaries, EntrySummary{
+			EntryID:   e.EntryID,
+			DiaryDate: e.DiaryDate,
+			Content:   e.Content,
+			Meta:      e.Meta,
+			CreatedAt: e.CreatedAt,
+			UpdatedAt: e.UpdatedAt,
 		})
 	}
-	out := map[string]any{
-		"entries":   summaries,
-		"page":      page,
-		"page_size": pageSize,
-		"total":     total,
+	out := EntryList{
+		Entries:  summaries,
+		Page:     page,
+		PageSize: pageSize,
+		Total:    total,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
-		return nil, err
+		return EntryList{}, err
 	}
 	return out, nil
 }
@@ -519,44 +568,48 @@ type DeleteEntryIn struct {
 	ExpectedRevision int
 }
 
-func (s *Service) DeleteEntry(ctx context.Context, fs *filesystem.Service, in DeleteEntryIn) (any, error) {
+func (s *Service) DeleteEntry(ctx context.Context, fs *filesystem.Service, in DeleteEntryIn) (DeletedEntry, error) {
 	if err := requireRequestID(in.RequestID); err != nil {
-		return nil, err
+		return DeletedEntry{}, err
 	}
 	if strings.TrimSpace(in.EntryID) == "" {
-		return nil, errf(codeBadRequest, "entry_id is required")
+		return DeletedEntry{}, errf(codeBadRequest, "entry_id is required")
 	}
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
-		return nil, wrapInternal(err)
+		return DeletedEntry{}, wrapInternal(err)
 	}
 	st.mu.Lock()
 
-	if cached, ok := replay(st, in.RequestID); ok {
+	var cached DeletedEntry
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		st.mu.Unlock()
+		return DeletedEntry{}, err
+	} else if ok {
 		st.mu.Unlock()
 		return cached, nil
 	}
 	entry := st.data.Entries[in.EntryID]
 	if entry == nil {
 		st.mu.Unlock()
-		return nil, errf(codeNotFound, "entry %s not found", in.EntryID)
+		return DeletedEntry{}, errf(codeNotFound, "entry %s not found", in.EntryID)
 	}
 	if entry.Revision != in.ExpectedRevision {
 		st.mu.Unlock()
-		return nil, errf(codeConflict, "revision conflict")
+		return DeletedEntry{}, errf(codeConflict, "revision conflict")
 	}
 	date := entry.DiaryDate
 	delete(st.data.Entries, in.EntryID)
 	if st.data.DateEntries[entry.DiaryDate] == in.EntryID {
 		delete(st.data.DateEntries, entry.DiaryDate)
 	}
-	out := map[string]any{
-		"entry_id": in.EntryID,
-		"deleted":  true,
+	out := DeletedEntry{
+		EntryID: in.EntryID,
+		Deleted: true,
 	}
 	if err := remember(ctx, st, in.RequestID, out); err != nil {
 		st.mu.Unlock()
-		return nil, err
+		return DeletedEntry{}, err
 	}
 	st.mu.Unlock()
 	s.emitChange(fs, date)
@@ -620,13 +673,26 @@ func requireDraft(st *Store, sessionID string, expectedRevision int) (*Session, 
 	return sess, nil
 }
 
-func replay(st *Store, requestID string) (any, bool) {
-	v, ok := st.data.Idempotency[requestID]
-	return v, ok
+// replayInto decodes a previously persisted idempotent response into dest. It
+// returns false when requestID has not been seen. Storing responses as typed
+// JSON keeps replay consistent before and after a restart.
+func replayInto(st *Store, requestID string, dest any) (bool, error) {
+	raw, ok := st.data.Idempotency[requestID]
+	if !ok || len(raw) == 0 {
+		return false, nil
+	}
+	if err := json.Unmarshal(raw, dest); err != nil {
+		return false, wrapInternal(err)
+	}
+	return true, nil
 }
 
 func remember(ctx context.Context, st *Store, requestID string, value any) error {
-	st.data.Idempotency[requestID] = value
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return wrapInternal(err)
+	}
+	st.data.Idempotency[requestID] = json.RawMessage(raw)
 	if err := st.persistLocked(ctx); err != nil {
 		return wrapInternal(err)
 	}

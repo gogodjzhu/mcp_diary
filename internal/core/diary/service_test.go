@@ -30,6 +30,45 @@ func testService(t *testing.T) (*Service, *filesystem.Service, time.Time) {
 	return svc, testFS(t, false), now
 }
 
+type stubEnricher struct{}
+
+func (stubEnricher) Enrich(context.Context, *filesystem.Service, string) EntryMeta {
+	return EntryMeta{Lunar: "八月二十", Weekday: "三", Weather: "🌧️", Source: "stub"}
+}
+
+func TestCommitSessionAttachesMetadata(t *testing.T) {
+	svc, fs, _ := testService(t)
+	svc.SetMetaEnricher(stubEnricher{})
+	ctx := context.Background()
+
+	created, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "m1", DiaryDate: "2026-09-30"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	sess := mustSession(t, created)
+	if _, err := svc.AppendSession(ctx, fs, AppendSessionIn{
+		RequestID: "m2", SessionID: sess.SessionID, ExpectedRevision: 1, Content: "hi",
+	}); err != nil {
+		t.Fatalf("AppendSession: %v", err)
+	}
+	committed, err := svc.CommitSession(ctx, fs, CommitSessionIn{
+		RequestID: "m3", SessionID: sess.SessionID, ExpectedRevision: 2,
+	})
+	if err != nil {
+		t.Fatalf("CommitSession: %v", err)
+	}
+	if committed.Meta == nil || committed.Meta.Lunar != "八月二十" || committed.Meta.Weather != "🌧️" {
+		t.Fatalf("committed meta = %+v", committed.Meta)
+	}
+	stored, err := svc.GetEntry(ctx, fs, GetEntryIn{RequestID: "m4", EntryID: committed.EntryID})
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if stored.Meta == nil || stored.Meta.Weekday != "三" {
+		t.Fatalf("stored meta = %+v", stored.Meta)
+	}
+}
+
 func mustSession(t *testing.T, v any) *Session {
 	t.Helper()
 	s, ok := v.(*Session)
@@ -55,7 +94,7 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 		t.Fatalf("created_at = %v, want %v", sess.CreatedAt, now)
 	}
 
-	appended, err := svc.AppendSession(ctx, fs, AppendSessionIn{
+	data, err := svc.AppendSession(ctx, fs, AppendSessionIn{
 		RequestID:        "req_002",
 		SessionID:        sess.SessionID,
 		ExpectedRevision: 1,
@@ -64,9 +103,8 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppendSession: %v", err)
 	}
-	data := appended.(map[string]any)
-	if data["revision"] != 2 {
-		t.Fatalf("revision = %v, want 2", data["revision"])
+	if data.Revision != 2 {
+		t.Fatalf("revision = %v, want 2", data.Revision)
 	}
 
 	got, err := svc.GetSession(ctx, fs, GetSessionIn{RequestID: "req_003", SessionID: sess.SessionID})
@@ -86,8 +124,8 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateSession: %v", err)
 	}
-	if updated.(map[string]any)["revision"] != 3 {
-		t.Fatalf("update revision = %v", updated.(map[string]any)["revision"])
+	if updated.Revision != 3 {
+		t.Fatalf("update revision = %v", updated.Revision)
 	}
 
 	committed, err := svc.CommitSession(ctx, fs, CommitSessionIn{
@@ -98,10 +136,10 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommitSession: %v", err)
 	}
-	out := committed.(map[string]any)
-	entryID := out["entry_id"].(string)
-	if out["status"] != StatusCommitted {
-		t.Fatalf("status = %v", out["status"])
+	out := committed
+	entryID := out.EntryID
+	if out.Status != StatusCommitted {
+		t.Fatalf("status = %v", out.Status)
 	}
 
 	if _, err := svc.GetSession(ctx, fs, GetSessionIn{RequestID: "req_006", SessionID: sess.SessionID}); err == nil {
@@ -114,7 +152,7 @@ func TestCreateAppendCommitFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEntry: %v", err)
 	}
-	if entry.(*Entry).Content == "" || entry.(*Entry).Revision != 1 {
+	if entry.Content == "" || entry.Revision != 1 {
 		t.Fatalf("entry = %+v", entry)
 	}
 
@@ -203,23 +241,22 @@ func TestDiscardAndUpdateDeleteEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	entryID := committed.(map[string]any)["entry_id"].(string)
+	entryID := committed.EntryID
 
 	updated, err := svc.UpdateEntry(ctx, fs, UpdateEntryIn{RequestID: "e4", EntryID: entryID, ExpectedRevision: 1, Content: "hello world"})
 	if err != nil {
 		t.Fatalf("UpdateEntry: %v", err)
 	}
-	if updated.(map[string]any)["revision"] != 2 {
-		t.Fatalf("entry revision = %v", updated.(map[string]any)["revision"])
+	if updated.Revision != 2 {
+		t.Fatalf("entry revision = %v", updated.Revision)
 	}
 
 	listed, err := svc.ListEntries(ctx, fs, ListEntriesIn{RequestID: "e5", DiaryDateFrom: "2026-10-01", DiaryDateTo: "2026-10-07"})
 	if err != nil {
 		t.Fatalf("ListEntries: %v", err)
 	}
-	list := listed.(map[string]any)
-	if list["total"] != 1 {
-		t.Fatalf("total = %v", list["total"])
+	if listed.Total != 1 {
+		t.Fatalf("total = %v", listed.Total)
 	}
 
 	if _, err := svc.DeleteEntry(ctx, fs, DeleteEntryIn{RequestID: "e6", EntryID: entryID, ExpectedRevision: 2}); err != nil {
@@ -262,6 +299,47 @@ func TestWorkspaceIsolationAndPersist(t *testing.T) {
 	}
 	if mustSession(t, got).SessionID != aliceID {
 		t.Fatalf("persisted session mismatch")
+	}
+}
+
+func TestIdempotentReplayAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 1, 13, 0, 0, 0, time.UTC)
+	svc := New(func() time.Time { return now }, time.UTC)
+	fs := testFS(t, false)
+
+	created, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "r_create", DiaryDate: "2026-10-01"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	sess := created
+	if _, err := svc.AppendSession(ctx, fs, AppendSessionIn{
+		RequestID: "r_append", SessionID: sess.SessionID, ExpectedRevision: 1, Content: "hello",
+	}); err != nil {
+		t.Fatalf("AppendSession: %v", err)
+	}
+	committed, err := svc.CommitSession(ctx, fs, CommitSessionIn{
+		RequestID: "r_commit", SessionID: sess.SessionID, ExpectedRevision: 2,
+	})
+	if err != nil {
+		t.Fatalf("CommitSession: %v", err)
+	}
+
+	// A fresh service over the reloaded workspace must replay the persisted
+	// response with the same typed shape, even though the session is gone.
+	reopened := New(func() time.Time { return now }, time.UTC)
+	fs2, err := filesystem.New(filesystem.Options{Root: fs.Root()})
+	if err != nil {
+		t.Fatalf("reopen workspace: %v", err)
+	}
+	replayed, err := reopened.CommitSession(ctx, fs2, CommitSessionIn{
+		RequestID: "r_commit", SessionID: sess.SessionID, ExpectedRevision: 2,
+	})
+	if err != nil {
+		t.Fatalf("replayed CommitSession: %v", err)
+	}
+	if replayed.EntryID != committed.EntryID || replayed.Status != StatusCommitted || replayed.Content != "hello" {
+		t.Fatalf("replay = %+v, want entry %+v", replayed, committed)
 	}
 }
 

@@ -1,4 +1,4 @@
-package sync
+package diarysync
 
 import (
 	"bytes"
@@ -370,4 +370,7 @@ func (failingProvider) Delete(context.Context, DocumentRef) (Result, error) {
 }
 func (failingProvider) Status(context.Context, DocumentRef) (RemoteStatus, error) {
 	return RemoteStatus{}, errors.New("remote unavailable")
+}
+func (failingProvider) Get(context.Context, DocumentRef) ([]byte, bool, error) {
+	return nil, false, errors.New("remote unavailable")
 }

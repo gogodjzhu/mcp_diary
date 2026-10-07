@@ -1,9 +1,9 @@
-package sync
+package diarysync
 
 import (
 	"context"
 	"fmt"
-	stdsync "sync"
+	"sync"
 	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
@@ -19,7 +19,7 @@ type Service struct {
 	registry *Registry
 	runner   Runner
 
-	mu     stdsync.Mutex
+	mu     sync.Mutex
 	stores map[string]*Store
 }
 
@@ -236,6 +236,26 @@ func (s *Service) RemoteStatus(ctx context.Context, fs *filesystem.Service, medi
 		return RemoteStatus{}, err
 	}
 	return provider.Status(ctx, ref)
+}
+
+// Fetch reads the current remote body of ref. It is used by the sync engine to
+// merge pre-existing remote content instead of overwriting it on first sync.
+func (s *Service) Fetch(ctx context.Context, fs *filesystem.Service, mediumID string, ref DocumentRef) ([]byte, bool, error) {
+	_, provider, err := s.open(ctx, fs, mediumID)
+	if err != nil {
+		return nil, false, err
+	}
+	return provider.Get(ctx, ref)
+}
+
+// RecordSynced marks a document as managed by the medium without issuing a
+// remote write. Used when a first-sync merge finds nothing new to push.
+func (s *Service) RecordSynced(ctx context.Context, fs *filesystem.Service, mediumID, path string, src Source) error {
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return err
+	}
+	return st.RecordSynced(ctx, mediumID, path, src)
 }
 
 func (s *Service) open(ctx context.Context, fs *filesystem.Service, mediumID string) (*Store, Provider, error) {

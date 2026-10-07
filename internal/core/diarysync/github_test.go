@@ -1,4 +1,4 @@
-package sync
+package diarysync
 
 import (
 	"context"
@@ -28,7 +28,11 @@ func TestGitHubProviderPushDeleteStatus(t *testing.T) {
 				http.Error(w, "missing", http.StatusNotFound)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"sha": "abc123", "path": path})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"sha":     "abc123",
+				"path":    path,
+				"content": base64.StdEncoding.EncodeToString([]byte("remote body")),
+			})
 		case r.Method == http.MethodPut:
 			b, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(b, &putBody)
@@ -79,6 +83,15 @@ func TestGitHubProviderPushDeleteStatus(t *testing.T) {
 	st, err := p.Status(context.Background(), DocumentRef{Kind: DocumentText, Path: doc.Path})
 	if err != nil || !st.Exists {
 		t.Fatalf("status = %+v err=%v", st, err)
+	}
+
+	body, exists, err := p.Get(context.Background(), DocumentRef{Kind: DocumentText, Path: doc.Path})
+	if err != nil || !exists || string(body) != "remote body" {
+		t.Fatalf("Get = %q exists=%v err=%v", body, exists, err)
+	}
+	_, exists, err = p.Get(context.Background(), DocumentRef{Kind: DocumentText, Path: "2026/2026-11.md"})
+	if err != nil || exists {
+		t.Fatalf("Get missing = exists=%v err=%v", exists, err)
 	}
 	if _, err := p.Delete(context.Background(), DocumentRef{Kind: DocumentText, Path: doc.Path}); err != nil {
 		t.Fatalf("Delete: %v", err)

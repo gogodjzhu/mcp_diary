@@ -10,7 +10,8 @@ import (
 	"strings"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
-	"github.com/gogodjzhu/mcp-diary/internal/core/sync"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diarymeta"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
@@ -18,7 +19,8 @@ import (
 type Config struct {
 	Logger     *slog.Logger
 	Workspaces *workspace.Manager
-	Sync       *sync.Service
+	Sync       *diarysync.Service
+	Meta       *diarymeta.Service
 }
 
 // Handler is the REST API handler. It is mounted under the "/api/" prefix and
@@ -48,6 +50,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleMe(w, id)
+	case path == "/api/settings":
+		h.handleSettings(w, r)
 	case path == "/api/sync/media":
 		h.handleMediaCollection(w, r)
 	case strings.HasPrefix(path, "/api/sync/media/"):

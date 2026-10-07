@@ -1,9 +1,9 @@
-package sync
+package diarysync
 
 import (
 	"context"
 	"fmt"
-	stdsync "sync"
+	"sync"
 )
 
 type Provider interface {
@@ -11,12 +11,16 @@ type Provider interface {
 	Push(ctx context.Context, doc Document) (Result, error)
 	Delete(ctx context.Context, ref DocumentRef) (Result, error)
 	Status(ctx context.Context, ref DocumentRef) (RemoteStatus, error)
+	// Get reads the current remote body of ref. exists is false when the
+	// document does not exist yet; a nil error with exists=true and an empty
+	// body means the remote file exists but is empty.
+	Get(ctx context.Context, ref DocumentRef) (body []byte, exists bool, err error)
 }
 
 type Factory func(medium Medium, credential string) (Provider, error)
 
 type Registry struct {
-	mu        stdsync.Mutex
+	mu        sync.Mutex
 	factories map[Kind]Factory
 }
 

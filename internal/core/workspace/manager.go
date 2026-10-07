@@ -126,6 +126,28 @@ func (m *Manager) serviceFor(identity *identity.Identity) (*filesystem.Service, 
 	return svc, nil
 }
 
+// Close releases the directory handles backing the base and per-user
+// workspaces. It is terminal: the Manager must not be used afterwards.
+func (m *Manager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var first error
+	for slug, svc := range m.services {
+		if err := svc.Close(); err != nil && first == nil {
+			first = err
+		}
+		delete(m.services, slug)
+	}
+	if m.anonymous != nil {
+		if err := m.anonymous.Close(); err != nil && first == nil {
+			first = err
+		}
+		m.anonymous = nil
+	}
+	return first
+}
+
 // Root returns the base workspace root.
 func (m *Manager) Root() string { return m.root }
 

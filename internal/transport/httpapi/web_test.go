@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diarymeta"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
-	"github.com/gogodjzhu/mcp-diary/internal/core/sync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/httpapi"
 )
@@ -25,15 +26,15 @@ func newHandler(t *testing.T) *httpapi.Handler {
 	return newHandlerWith(t, nil)
 }
 
-func newHandlerWith(t *testing.T, engine sync.Runner) *httpapi.Handler {
+func newHandlerWith(t *testing.T, engine diarysync.Runner) *httpapi.Handler {
 	t.Helper()
-	codec, err := sync.NewCodec(testKey)
+	codec, err := diarysync.NewCodec(testKey)
 	if err != nil {
 		t.Fatalf("NewCodec: %v", err)
 	}
-	reg := sync.NewRegistry()
-	reg.Register(sync.KindGitHub, sync.MemoryFactory(sync.KindGitHub, nil))
-	svc := sync.New(codec, reg, func() time.Time {
+	reg := diarysync.NewRegistry()
+	reg.Register(diarysync.KindGitHub, diarysync.MemoryFactory(diarysync.KindGitHub, nil))
+	svc := diarysync.New(codec, reg, func() time.Time {
 		return time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	})
 	if engine != nil {
@@ -49,7 +50,41 @@ func newHandlerWith(t *testing.T, engine sync.Runner) *httpapi.Handler {
 	return httpapi.New(httpapi.Config{
 		Workspaces: wm,
 		Sync:       svc,
+		Meta:       diarymeta.New(),
 	})
+}
+
+func TestSettingsRoundTrip(t *testing.T) {
+	h := newHandler(t)
+
+	rec := doRequest(t, h, http.MethodGet, "/api/settings", "good-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET settings status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	body := map[string]any{"lunar_enabled": true, "weather_enabled": true, "weather_location": "Beijing"}
+	rec = doRequestBody(t, h, http.MethodPut, "/api/settings", "good-token", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT settings status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	got := decode(t, rec)
+	if got["weather_location"] != "Beijing" || got["lunar_enabled"] != true {
+		t.Fatalf("settings = %v", got)
+	}
+
+	rec = doRequest(t, h, http.MethodGet, "/api/settings", "good-token")
+	got = decode(t, rec)
+	if got["weather_location"] != "Beijing" {
+		t.Fatalf("reloaded settings = %v", got)
+	}
+}
+
+func TestSettingsRequiresAuth(t *testing.T) {
+	h := newHandler(t)
+	rec := doRequest(t, h, http.MethodGet, "/api/settings", "bad-token")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
 }
 
 func doRequest(t *testing.T, h http.Handler, method, target, token string) *httptest.ResponseRecorder {

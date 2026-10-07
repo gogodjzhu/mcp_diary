@@ -1,16 +1,15 @@
-package sync
+package diarysync
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
-	stdsync "sync"
+	"sync"
 	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
+	"github.com/gogodjzhu/mcp-diary/internal/core/persist"
 )
 
 const (
@@ -27,7 +26,7 @@ type stateFile struct {
 }
 
 type Store struct {
-	mu    stdsync.Mutex
+	mu    sync.Mutex
 	fs    *filesystem.Service
 	now   func() time.Time
 	codec *Codec
@@ -53,13 +52,13 @@ func newStore(fs *filesystem.Service, codec *Codec, now func() time.Time) *Store
 
 func loadStore(ctx context.Context, fs *filesystem.Service, codec *Codec, now func() time.Time) (*Store, error) {
 	s := newStore(fs, codec, now)
-	if err := loadJSON(ctx, fs, mediaPath, &s.media); err != nil {
+	if err := persist.Load(ctx, fs, mediaPath, &s.media); err != nil {
 		return nil, err
 	}
 	if s.media.Media == nil {
 		s.media.Media = map[string]*Medium{}
 	}
-	if err := loadJSON(ctx, fs, statePath, &s.state); err != nil {
+	if err := persist.Load(ctx, fs, statePath, &s.state); err != nil {
 		return nil, err
 	}
 	if s.state.States == nil {
@@ -68,42 +67,12 @@ func loadStore(ctx context.Context, fs *filesystem.Service, codec *Codec, now fu
 	return s, nil
 }
 
-func loadJSON(ctx context.Context, fs *filesystem.Service, path string, dest any) error {
-	b, err := fs.ReadFile(ctx, path)
-	if err != nil {
-		if errors.Is(err, filesystem.ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-	if len(b) == 0 {
-		return nil
-	}
-	return json.Unmarshal(b, dest)
-}
-
 func (s *Store) persistMediaLocked(ctx context.Context) error {
-	b, err := json.MarshalIndent(s.media, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = s.fs.WriteAtomic(ctx, mediaPath, string(b), filesystem.WriteOptions{
-		CreateDirs: true,
-		Mode:       0o600,
-	})
-	return err
+	return persist.Save(ctx, s.fs, mediaPath, s.media)
 }
 
 func (s *Store) persistStateLocked(ctx context.Context) error {
-	b, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = s.fs.WriteAtomic(ctx, statePath, string(b), filesystem.WriteOptions{
-		CreateDirs: true,
-		Mode:       0o600,
-	})
-	return err
+	return persist.Save(ctx, s.fs, statePath, s.state)
 }
 
 func (s *Store) List(ctx context.Context) ([]PublicMedium, error) {
@@ -306,7 +275,31 @@ func (s *Store) RecordPush(ctx context.Context, mediumID string, doc Document, r
 			Path:         result.Path,
 			RemoteID:     result.RemoteID,
 			EntryIDs:     cloneStrings(doc.Source.EntryIDs),
+			Dates:        cloneStrings(doc.Source.Dates),
 			Revision:     doc.Source.Revision,
+			LastSyncedAt: synced,
+		}
+	})
+}
+
+// RecordSynced records that a document is now managed by the medium without a
+// remote write. This is used when a first-sync merge discovers the remote
+// already contains every local day, so no new commit is needed but the file
+// must stop being treated as "first time".
+func (s *Store) RecordSynced(ctx context.Context, mediumID, path string, src Source) error {
+	return s.mutateState(ctx, mediumID, func(st *SyncState) {
+		st.Status = StatusSucceeded
+		st.LastError = ""
+		synced := s.now()
+		st.LastSyncedAt = &synced
+		if st.Documents == nil {
+			st.Documents = map[string]DocumentState{}
+		}
+		st.Documents[path] = DocumentState{
+			Path:         path,
+			EntryIDs:     cloneStrings(src.EntryIDs),
+			Dates:        cloneStrings(src.Dates),
+			Revision:     src.Revision,
 			LastSyncedAt: synced,
 		}
 	})

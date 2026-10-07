@@ -43,6 +43,12 @@ export interface MediumInput {
   credential?: string
 }
 
+export interface DiarySettings {
+  lunar_enabled: boolean
+  weather_enabled: boolean
+  weather_location?: string
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -117,3 +123,9 @@ export const deleteMedium = (token: string, id: string): Promise<void> =>
 
 export const triggerSync = (token: string, id: string): Promise<SyncState> =>
   apiSend<SyncState>(token, 'POST', `/api/sync/media/${id}/sync`)
+
+export const getSettings = (token: string): Promise<DiarySettings> =>
+  apiGet<DiarySettings>(token, '/api/settings')
+
+export const updateSettings = (token: string, input: DiarySettings): Promise<DiarySettings> =>
+  apiSend<DiarySettings>(token, 'PUT', '/api/settings', input)

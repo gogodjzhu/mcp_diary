@@ -1,11 +1,11 @@
-package sync
+package diarysync
 
 import (
 	"context"
 	"errors"
 	"log/slog"
 	"strings"
-	stdsync "sync"
+	"sync"
 	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
@@ -32,8 +32,8 @@ type Engine struct {
 	jobs   chan job
 	flush  chan string
 
-	mu    stdsync.Mutex
-	locks map[string]*stdsync.Mutex
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
 }
 
 type job struct {
@@ -71,7 +71,7 @@ func NewEngine(syncSvc *Service, diarySvc *diary.Service, debounce time.Duration
 		cancel:   cancel,
 		jobs:     make(chan job, 64),
 		flush:    make(chan string, 64),
-		locks:    map[string]*stdsync.Mutex{},
+		locks:    map[string]*sync.Mutex{},
 	}
 	if diarySvc != nil {
 		diarySvc.SetChangeHook(e.NotifyDates)
@@ -125,6 +125,36 @@ func (e *Engine) SyncNow(ctx context.Context, fs *filesystem.Service, dates ...s
 		j.full = true
 	}
 	return e.syncWorkspace(ctx, j)
+}
+
+// SyncAll implements Runner. It fully syncs a single medium for the given
+// workspace, which is what the manual "sync now" action triggers over HTTP.
+func (e *Engine) SyncAll(ctx context.Context, fs *filesystem.Service, mediumID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if fs == nil {
+		return errors.New("no filesystem bound to the request")
+	}
+	lock := e.rootLock(fs.Root())
+	lock.Lock()
+	defer lock.Unlock()
+
+	media, err := e.sync.List(ctx, fs)
+	if err != nil {
+		return err
+	}
+	entries, err := e.diary.ListCommitted(ctx, fs)
+	if err != nil {
+		return err
+	}
+	for _, medium := range media {
+		if medium.ID != mediumID {
+			continue
+		}
+		return e.syncMedium(ctx, fs, medium, entries, nil, true)
+	}
+	return ErrNotFound
 }
 
 func (e *Engine) loop() {
@@ -189,12 +219,12 @@ func (e *Engine) run(j job) {
 	}
 }
 
-func (e *Engine) rootLock(root string) *stdsync.Mutex {
+func (e *Engine) rootLock(root string) *sync.Mutex {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	l, ok := e.locks[root]
 	if !ok {
-		l = &stdsync.Mutex{}
+		l = &sync.Mutex{}
 		e.locks[root] = l
 	}
 	return l
@@ -255,9 +285,10 @@ func (e *Engine) syncMedium(ctx context.Context, fs *filesystem.Service, medium 
 			targets = append(targets, m)
 		}
 	}
+	preserve := PreserveExisting(medium.Settings)
 	var last error
 	for _, month := range targets {
-		if err := e.syncMonth(ctx, fs, medium.ID, state, entries, month, full); err != nil {
+		if err := e.syncMonth(ctx, fs, medium.ID, state, entries, month, full, preserve); err != nil {
 			last = err
 		} else {
 			state, _ = e.sync.State(ctx, fs, medium.ID)
@@ -266,28 +297,80 @@ func (e *Engine) syncMedium(ctx context.Context, fs *filesystem.Service, medium 
 	return last
 }
 
-func (e *Engine) syncMonth(ctx context.Context, fs *filesystem.Service, mediumID string, state *SyncState, entries []diary.Entry, month string, full bool) error {
+func (e *Engine) syncMonth(ctx context.Context, fs *filesystem.Service, mediumID string, state *SyncState, entries []diary.Entry, month string, full, preserve bool) error {
 	path := MonthPath(month)
+	var ds DocumentState
+	managed := false
+	if state != nil {
+		ds, managed = state.Documents[path]
+	}
 	monthEntries := EntriesForMonth(entries, month)
+	src := SourceFrom(monthEntries)
+
 	if len(monthEntries) == 0 {
+		if preserve {
+			if !managed {
+				// Never touch a remote file this medium did not write.
+				return nil
+			}
+			remote, exists, err := e.sync.Fetch(ctx, fs, mediumID, DocumentRef{Kind: DocumentText, Path: path})
+			if err != nil {
+				return err
+			}
+			if !exists || len(remote) == 0 {
+				return e.removeMonth(ctx, fs, mediumID, path)
+			}
+			merged, changed := MergeMonth(remote, entries, month, ds.Dates)
+			if !changed {
+				return nil
+			}
+			if len(merged) == 0 {
+				return e.removeMonth(ctx, fs, mediumID, path)
+			}
+			return e.pushMonth(ctx, fs, mediumID, path, merged, src)
+		}
 		if state != nil {
-			if _, ok := state.Documents[path]; !ok && !full {
+			if !managed && !full {
 				return nil
 			}
 		}
-		return e.withRetry(ctx, func() error {
-			_, err := e.sync.Remove(ctx, fs, mediumID, DocumentRef{Kind: DocumentText, Path: path})
-			return err
-		})
+		return e.removeMonth(ctx, fs, mediumID, path)
 	}
-	src := SourceFrom(monthEntries)
+
 	if !full && MonthUnchanged(state, path, src) {
 		return nil
 	}
+	if preserve {
+		remote, exists, err := e.sync.Fetch(ctx, fs, mediumID, DocumentRef{Kind: DocumentText, Path: path})
+		if err != nil {
+			return err
+		}
+		if exists && len(remote) > 0 {
+			merged, changed := MergeMonth(remote, entries, month, ds.Dates)
+			if !changed {
+				// Nothing to write; refresh the managed dates so future syncs
+				// keep protecting pre-existing remote days.
+				return e.sync.RecordSynced(ctx, fs, mediumID, path, src)
+			}
+			if len(merged) == 0 {
+				return e.removeMonth(ctx, fs, mediumID, path)
+			}
+			return e.pushMonth(ctx, fs, mediumID, path, merged, src)
+		}
+	}
+
+	body := RenderMonth(entries, month)
+	if len(body) == 0 {
+		return nil
+	}
+	return e.pushMonth(ctx, fs, mediumID, path, body, src)
+}
+
+func (e *Engine) pushMonth(ctx context.Context, fs *filesystem.Service, mediumID, path string, body []byte, src Source) error {
 	doc := Document{
 		Kind:        DocumentText,
 		Path:        path,
-		Body:        RenderMonth(entries, month),
+		Body:        body,
 		ContentType: "text/markdown",
 		Source:      src,
 	}
@@ -295,6 +378,31 @@ func (e *Engine) syncMonth(ctx context.Context, fs *filesystem.Service, mediumID
 		_, err := e.sync.Push(ctx, fs, mediumID, doc)
 		return err
 	})
+}
+
+func (e *Engine) removeMonth(ctx context.Context, fs *filesystem.Service, mediumID, path string) error {
+	return e.withRetry(ctx, func() error {
+		_, err := e.sync.Remove(ctx, fs, mediumID, DocumentRef{Kind: DocumentText, Path: path})
+		return err
+	})
+}
+
+// PreserveExisting reports whether a medium should merge with pre-existing
+// remote content instead of overwriting it. Days the medium never wrote are
+// kept byte-for-byte; only dates it previously pushed are replaced or removed.
+// It defaults to true; set the "preserve_existing" medium setting to "false"
+// to restore plain overwrite behaviour.
+func PreserveExisting(settings map[string]string) bool {
+	raw, ok := settings["preserve_existing"]
+	if !ok {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 func (e *Engine) withRetry(ctx context.Context, fn func() error) error {
@@ -316,13 +424,18 @@ func (e *Engine) withRetry(ctx context.Context, fn func() error) error {
 }
 
 func monthFromPath(path string) string {
-	const prefix = "diary/"
-	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, ".md") {
+	if !strings.HasSuffix(path, ".md") {
 		return ""
 	}
-	trimmed := strings.TrimSuffix(strings.TrimPrefix(path, prefix), ".md")
+	trimmed := strings.TrimSuffix(path, ".md")
 	_, month, ok := strings.Cut(trimmed, "/")
 	if !ok {
+		return ""
+	}
+	if len(month) != len(monthLayout) {
+		return ""
+	}
+	if _, err := time.Parse(monthLayout, month); err != nil {
 		return ""
 	}
 	return month

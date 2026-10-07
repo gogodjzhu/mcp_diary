@@ -6,9 +6,12 @@ import {
   createMedium,
   deleteMedium,
   getMe,
+  getSettings,
   listMedia,
   triggerSync,
   updateMedium,
+  updateSettings,
+  type DiarySettings,
   type Me,
   type Medium,
   type SyncState,
@@ -23,6 +26,13 @@ const saving = ref(false)
 const syncingID = ref('')
 const editingID = ref('')
 
+const settings = ref<DiarySettings>({
+  lunar_enabled: false,
+  weather_enabled: false,
+  weather_location: '',
+})
+const settingsSaving = ref(false)
+
 const form = ref({
   name: 'GitHub',
   owner: '',
@@ -30,6 +40,7 @@ const form = ref({
   branch: 'main',
   credential: '',
   enabled: true,
+  preserveExisting: true,
 })
 
 const formTitle = computed(() => (editingID.value ? '编辑存储介质' : '添加 GitHub 存储'))
@@ -43,6 +54,7 @@ function resetForm(): void {
     branch: 'main',
     credential: '',
     enabled: true,
+    preserveExisting: true,
   }
 }
 
@@ -55,6 +67,7 @@ function startEdit(item: Medium): void {
     branch: item.settings?.branch ?? 'main',
     credential: '',
     enabled: item.enabled,
+    preserveExisting: item.settings?.preserve_existing !== 'false',
   }
 }
 
@@ -75,6 +88,7 @@ async function refresh(): Promise<void> {
   try {
     me.value = await getMe(token.value)
     await loadMedia()
+    settings.value = await getSettings(token.value)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
     clearSession()
@@ -104,7 +118,27 @@ function signOut(): void {
   me.value = null
   media.value = []
   error.value = ''
+  settings.value = { lunar_enabled: false, weather_enabled: false, weather_location: '' }
   resetForm()
+}
+
+async function saveSettings(): Promise<void> {
+  if (!token.value) {
+    return
+  }
+  settingsSaving.value = true
+  error.value = ''
+  try {
+    settings.value = await updateSettings(token.value, {
+      lunar_enabled: settings.value.lunar_enabled,
+      weather_enabled: settings.value.weather_enabled,
+      weather_location: settings.value.weather_location?.trim() || undefined,
+    })
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    settingsSaving.value = false
+  }
 }
 
 async function saveMedium(): Promise<void> {
@@ -121,6 +155,7 @@ async function saveMedium(): Promise<void> {
         owner: form.value.owner.trim(),
         repo: form.value.repo.trim(),
         branch: form.value.branch.trim() || 'main',
+        preserve_existing: form.value.preserveExisting ? 'true' : 'false',
       },
       credential: form.value.credential.trim() || undefined,
     }
@@ -245,6 +280,32 @@ function repoLabel(item: Medium): string {
     </section>
 
     <section v-if="me">
+      <h2>日记元数据</h2>
+      <p class="hint">
+        农历与天气作为元数据随日记保存，并在导出到 GitHub 时写入每天的标题行。天气需要填写城市名。
+      </p>
+      <form class="card" @submit.prevent="saveSettings">
+        <label class="check">
+          <input v-model="settings.lunar_enabled" type="checkbox" />
+          写入农历（按日期推算）
+        </label>
+        <label class="check">
+          <input v-model="settings.weather_enabled" type="checkbox" />
+          写入天气（Open-Meteo，免 key）
+        </label>
+        <label v-if="settings.weather_enabled">
+          城市名
+          <input v-model="settings.weather_location" placeholder="Beijing" />
+        </label>
+        <div class="actions">
+          <button type="submit" :disabled="settingsSaving">
+            {{ settingsSaving ? '保存中…' : '保存元数据设置' }}
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <section v-if="me">
       <h2>存储介质</h2>
       <p class="hint">配置仅能在此页面完成。Token 只在提交时通过已登录会话传输，接口与页面均不回显明文。</p>
 
@@ -279,6 +340,10 @@ function repoLabel(item: Medium): string {
         <label class="check">
           <input v-model="form.enabled" type="checkbox" />
           启用同步
+        </label>
+        <label class="check">
+          <input v-model="form.preserveExisting" type="checkbox" />
+          保留远端已有日记（按日期合并，不覆盖旧日期）
         </label>
         <div class="actions">
           <button type="submit" :disabled="saving">{{ editingID ? '保存修改' : '添加' }}</button>

@@ -1,4 +1,4 @@
-package sync
+package diarysync
 
 import "errors"
 
