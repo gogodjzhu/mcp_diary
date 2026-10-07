@@ -1,9 +1,9 @@
-package sync
+package diarysync
 
 import (
 	"context"
 	"fmt"
-	stdsync "sync"
+	"sync"
 	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
@@ -19,7 +19,7 @@ type Service struct {
 	registry *Registry
 	runner   Runner
 
-	mu     stdsync.Mutex
+	mu     sync.Mutex
 	stores map[string]*Store
 }
 
@@ -84,7 +84,40 @@ func (s *Service) Upsert(ctx context.Context, fs *filesystem.Service, in UpsertI
 	if err != nil {
 		return nil, err
 	}
-	return st.Upsert(ctx, in)
+	prepared, err := st.prepare(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	if s.registry.probes(prepared.Kind) {
+		if err := s.probe(ctx, prepared.Medium, prepared.Credential); err != nil {
+			return nil, err
+		}
+	}
+	return st.commit(ctx, prepared)
+}
+
+// probe checks that a GitHub medium can be reached. A failed check is
+// returned as VerifyError so create and update refuse to save it.
+func (s *Service) probe(ctx context.Context, medium Medium, credential string) error {
+	provider, err := s.registry.Open(medium, credential)
+	if err != nil {
+		return err
+	}
+	result, err := provider.Verify(ctx)
+	if err != nil {
+		return err
+	}
+	if result.OK {
+		return nil
+	}
+	msg := "连接验证未通过"
+	for _, check := range result.Checks {
+		if !check.OK && check.Message != "" {
+			msg = check.Message
+			break
+		}
+	}
+	return &VerifyError{Message: msg}
 }
 
 func (s *Service) Delete(ctx context.Context, fs *filesystem.Service, id string) error {
@@ -152,6 +185,20 @@ func (s *Service) Trigger(ctx context.Context, fs *filesystem.Service, mediumID 
 			return nil, stateErr
 		}
 		return state, ErrEngineNotConfigured
+	}
+	if s.registry.probes(pub.Kind) {
+		medium, credential, err := st.openMedium(ctx, mediumID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.probe(ctx, medium, credential); err != nil {
+			_ = st.RecordFailure(ctx, mediumID, err.Error())
+			state, stateErr := st.GetState(ctx, mediumID)
+			if stateErr != nil {
+				return nil, err
+			}
+			return state, err
+		}
 	}
 	if err := st.MarkSyncing(ctx, mediumID); err != nil {
 		return nil, err
@@ -236,6 +283,26 @@ func (s *Service) RemoteStatus(ctx context.Context, fs *filesystem.Service, medi
 		return RemoteStatus{}, err
 	}
 	return provider.Status(ctx, ref)
+}
+
+// Fetch reads the current remote body of ref. It is used by the sync engine to
+// merge pre-existing remote content instead of overwriting it on first sync.
+func (s *Service) Fetch(ctx context.Context, fs *filesystem.Service, mediumID string, ref DocumentRef) ([]byte, bool, error) {
+	_, provider, err := s.open(ctx, fs, mediumID)
+	if err != nil {
+		return nil, false, err
+	}
+	return provider.Get(ctx, ref)
+}
+
+// RecordSynced marks a document as managed by the medium without issuing a
+// remote write. Used when a first-sync merge finds nothing new to push.
+func (s *Service) RecordSynced(ctx context.Context, fs *filesystem.Service, mediumID, path string, src Source) error {
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return err
+	}
+	return st.RecordSynced(ctx, mediumID, path, src)
 }
 
 func (s *Service) open(ctx context.Context, fs *filesystem.Service, mediumID string) (*Store, Provider, error) {

@@ -1,16 +1,15 @@
-package sync
+package diarysync
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
-	stdsync "sync"
+	"sync"
 	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
+	"github.com/gogodjzhu/mcp-diary/internal/core/persist"
 )
 
 const (
@@ -27,7 +26,7 @@ type stateFile struct {
 }
 
 type Store struct {
-	mu    stdsync.Mutex
+	mu    sync.Mutex
 	fs    *filesystem.Service
 	now   func() time.Time
 	codec *Codec
@@ -53,13 +52,13 @@ func newStore(fs *filesystem.Service, codec *Codec, now func() time.Time) *Store
 
 func loadStore(ctx context.Context, fs *filesystem.Service, codec *Codec, now func() time.Time) (*Store, error) {
 	s := newStore(fs, codec, now)
-	if err := loadJSON(ctx, fs, mediaPath, &s.media); err != nil {
+	if err := persist.Load(ctx, fs, mediaPath, &s.media); err != nil {
 		return nil, err
 	}
 	if s.media.Media == nil {
 		s.media.Media = map[string]*Medium{}
 	}
-	if err := loadJSON(ctx, fs, statePath, &s.state); err != nil {
+	if err := persist.Load(ctx, fs, statePath, &s.state); err != nil {
 		return nil, err
 	}
 	if s.state.States == nil {
@@ -68,42 +67,12 @@ func loadStore(ctx context.Context, fs *filesystem.Service, codec *Codec, now fu
 	return s, nil
 }
 
-func loadJSON(ctx context.Context, fs *filesystem.Service, path string, dest any) error {
-	b, err := fs.ReadFile(ctx, path)
-	if err != nil {
-		if errors.Is(err, filesystem.ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-	if len(b) == 0 {
-		return nil
-	}
-	return json.Unmarshal(b, dest)
-}
-
 func (s *Store) persistMediaLocked(ctx context.Context) error {
-	b, err := json.MarshalIndent(s.media, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = s.fs.WriteAtomic(ctx, mediaPath, string(b), filesystem.WriteOptions{
-		CreateDirs: true,
-		Mode:       0o600,
-	})
-	return err
+	return persist.Save(ctx, s.fs, mediaPath, s.media)
 }
 
 func (s *Store) persistStateLocked(ctx context.Context) error {
-	b, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = s.fs.WriteAtomic(ctx, statePath, string(b), filesystem.WriteOptions{
-		CreateDirs: true,
-		Mode:       0o600,
-	})
-	return err
+	return persist.Save(ctx, s.fs, statePath, s.state)
 }
 
 func (s *Store) List(ctx context.Context) ([]PublicMedium, error) {
@@ -148,62 +117,96 @@ type UpsertIn struct {
 	Credential string
 }
 
-func (s *Store) Upsert(ctx context.Context, in UpsertIn) (*PublicMedium, error) {
+// preparedMedium is a validated medium that has not been written yet.
+// Credential is the plaintext token used to probe the remote before commit.
+type preparedMedium struct {
+	Medium     Medium
+	Credential string
+	Kind       Kind
+	isNew      bool
+}
+
+func (s *Store) prepare(ctx context.Context, in UpsertIn) (preparedMedium, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return preparedMedium{}, err
 	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
-		return nil, ErrMediumNameRequired
+		return preparedMedium{}, ErrMediumNameRequired
 	}
 	if err := rejectSecretSettings(in.Settings); err != nil {
-		return nil, err
+		return preparedMedium{}, err
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := s.now()
-	var m *Medium
-	if in.ID != "" {
-		m = s.media.Media[in.ID]
-		if m == nil {
-			return nil, fmt.Errorf("%w: %s", ErrNotFound, in.ID)
+	var base Medium
+	isNew := in.ID == ""
+	if !isNew {
+		stored := s.media.Media[in.ID]
+		if stored == nil {
+			return preparedMedium{}, fmt.Errorf("%w: %s", ErrNotFound, in.ID)
 		}
-		if in.Kind != "" && in.Kind != m.Kind {
-			return nil, fmt.Errorf("%w: kind cannot change", ErrUnknownKind)
+		if in.Kind != "" && in.Kind != stored.Kind {
+			return preparedMedium{}, fmt.Errorf("%w: kind cannot change", ErrUnknownKind)
 		}
+		base = *cloneMedium(stored)
 	} else {
 		if !in.Kind.Valid() {
 			if in.Kind == "" {
-				return nil, ErrMediumKindRequired
+				return preparedMedium{}, ErrMediumKindRequired
 			}
-			return nil, fmt.Errorf("%w: %s", ErrUnknownKind, in.Kind)
+			return preparedMedium{}, fmt.Errorf("%w: %s", ErrUnknownKind, in.Kind)
 		}
-		m = &Medium{
-			ID:        newID("sm"),
-			Kind:      in.Kind,
-			CreatedAt: now,
-		}
+		base = Medium{ID: newID("sm"), Kind: in.Kind, CreatedAt: now, Enabled: true}
 	}
 
-	m.Name = name
+	base.Name = name
 	if in.Enabled != nil {
-		m.Enabled = *in.Enabled
-	} else if in.ID == "" {
-		m.Enabled = true
+		base.Enabled = *in.Enabled
 	}
 	if in.Settings != nil {
-		m.Settings = cloneSettings(in.Settings)
+		base.Settings = cloneSettings(in.Settings)
+	}
+	if base.Kind == KindGitHub && (isNew || in.Settings != nil) {
+		normalized, err := ApplyGitHubSettings(base.Settings)
+		if err != nil {
+			return preparedMedium{}, err
+		}
+		base.Settings = normalized
+	}
+
+	credential := strings.TrimSpace(in.Credential)
+	if credential == "" && base.Secret.Ciphertext != "" {
+		plain, err := s.codec.Decrypt(base.Secret.Ciphertext)
+		if err != nil {
+			return preparedMedium{}, err
+		}
+		credential = plain
+	}
+	if base.Kind == KindGitHub && credential == "" {
+		return preparedMedium{}, ErrGitHubCredential
 	}
 	if in.Credential != "" {
 		ciphertext, err := s.codec.Encrypt(in.Credential)
 		if err != nil {
-			return nil, err
+			return preparedMedium{}, err
 		}
-		m.Secret = Secret{Ciphertext: ciphertext}
+		base.Secret = Secret{Ciphertext: ciphertext}
 	}
-	m.UpdatedAt = now
+	base.UpdatedAt = now
+	return preparedMedium{Medium: base, Credential: credential, Kind: base.Kind, isNew: isNew}, nil
+}
+
+func (s *Store) commit(ctx context.Context, prepared preparedMedium) (*PublicMedium, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := cloneMedium(&prepared.Medium)
 	s.media.Media[m.ID] = m
 	if _, ok := s.state.States[m.ID]; !ok {
 		s.state.States[m.ID] = &SyncState{
@@ -218,8 +221,16 @@ func (s *Store) Upsert(ctx context.Context, in UpsertIn) (*PublicMedium, error) 
 	if err := s.persistMediaLocked(ctx); err != nil {
 		return nil, err
 	}
-	pub := cloneMedium(m).Public()
+	pub := m.Public()
 	return &pub, nil
+}
+
+func (s *Store) Upsert(ctx context.Context, in UpsertIn) (*PublicMedium, error) {
+	prepared, err := s.prepare(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	return s.commit(ctx, prepared)
 }
 
 func (s *Store) Delete(ctx context.Context, id string) error {
@@ -306,7 +317,31 @@ func (s *Store) RecordPush(ctx context.Context, mediumID string, doc Document, r
 			Path:         result.Path,
 			RemoteID:     result.RemoteID,
 			EntryIDs:     cloneStrings(doc.Source.EntryIDs),
+			Dates:        cloneStrings(doc.Source.Dates),
 			Revision:     doc.Source.Revision,
+			LastSyncedAt: synced,
+		}
+	})
+}
+
+// RecordSynced records that a document is now managed by the medium without a
+// remote write. This is used when a first-sync merge discovers the remote
+// already contains every local day, so no new commit is needed but the file
+// must stop being treated as "first time".
+func (s *Store) RecordSynced(ctx context.Context, mediumID, path string, src Source) error {
+	return s.mutateState(ctx, mediumID, func(st *SyncState) {
+		st.Status = StatusSucceeded
+		st.LastError = ""
+		synced := s.now()
+		st.LastSyncedAt = &synced
+		if st.Documents == nil {
+			st.Documents = map[string]DocumentState{}
+		}
+		st.Documents[path] = DocumentState{
+			Path:         path,
+			EntryIDs:     cloneStrings(src.EntryIDs),
+			Dates:        cloneStrings(src.Dates),
+			Revision:     src.Revision,
 			LastSyncedAt: synced,
 		}
 	})

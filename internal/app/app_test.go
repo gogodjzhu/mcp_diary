@@ -3,12 +3,14 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/app"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/logging"
 	"github.com/mark3labs/mcp-go/client"
@@ -144,6 +146,49 @@ func envelopeOf(t *testing.T, result *mcp.CallToolResult) map[string]any {
 		t.Fatalf("decode text %q: %v", textOf(result), err)
 	}
 	return payload
+}
+
+func TestAppWiresSyncEngineForManualTrigger(t *testing.T) {
+	cfg := config.Default()
+	cfg.Root = t.TempDir()
+	cfg.LogLevel = "error"
+	cfg.Sync.EncryptionKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+
+	logger, err := logging.New(cfg.LogLevel, cfg.LogFormat)
+	if err != nil {
+		t.Fatalf("logging.New: %v", err)
+	}
+	application, err := app.New(cfg, logger)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	ctx := context.Background()
+	fs, err := application.Workspaces().Filesystem(ctx)
+	if err != nil {
+		t.Fatalf("Filesystem: %v", err)
+	}
+	medium, err := application.Sync().Upsert(ctx, fs, diarysync.UpsertIn{
+		Kind:       diarysync.KindGitHub,
+		Name:       "github",
+		Credential: "ghp_test",
+		Settings:   map[string]string{"owner": "test_diary", "repo": "test_diary"},
+	})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	st, err := application.Sync().Trigger(ctx, fs, medium.ID)
+	if errors.Is(err, diarysync.ErrEngineNotConfigured) {
+		t.Fatal("sync engine is not wired into the service")
+	}
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if st == nil || st.Status != diarysync.StatusSucceeded {
+		t.Fatalf("state = %+v, want %s", st, diarysync.StatusSucceeded)
+	}
 }
 
 func TestDiaryMCPEndToEnd(t *testing.T) {

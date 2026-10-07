@@ -5,10 +5,15 @@ import {
   ApiError,
   createMedium,
   deleteMedium,
+  friendlyError,
   getMe,
+  splitGitHubDetail,
+  getSettings,
   listMedia,
   triggerSync,
   updateMedium,
+  updateSettings,
+  type DiarySettings,
   type Me,
   type Medium,
   type SyncState,
@@ -17,11 +22,19 @@ import {
 const token = ref('')
 const me = ref<Me | null>(null)
 const error = ref('')
+const errorDetail = ref('')
 const loading = ref(false)
 const media = ref<Medium[]>([])
 const saving = ref(false)
 const syncingID = ref('')
 const editingID = ref('')
+
+const settings = ref<DiarySettings>({
+  lunar_enabled: false,
+  weather_enabled: false,
+  weather_location: '',
+})
+const settingsSaving = ref(false)
 
 const form = ref({
   name: 'GitHub',
@@ -30,12 +43,38 @@ const form = ref({
   branch: 'main',
   credential: '',
   enabled: true,
+  preserveExisting: true,
 })
+const formNotice = ref('')
+const formError = ref('')
+const formDetail = ref('')
+
+const namePattern = /^[A-Za-z0-9_.-]+$/
+
+function showError(err: unknown): void {
+  const friendly = friendlyError(err)
+  error.value = friendly.summary
+  errorDetail.value = friendly.detail
+}
+
+function clearError(): void {
+  error.value = ''
+  errorDetail.value = ''
+}
 
 const formTitle = computed(() => (editingID.value ? '编辑存储介质' : '添加 GitHub 存储'))
+const submitLabel = computed(() => {
+  if (saving.value) {
+    return editingID.value ? '保存中…' : '添加中…'
+  }
+  return editingID.value ? '保存修改' : '添加'
+})
 
 function resetForm(): void {
   editingID.value = ''
+  formNotice.value = ''
+  formError.value = ''
+  formDetail.value = ''
   form.value = {
     name: 'GitHub',
     owner: '',
@@ -43,11 +82,15 @@ function resetForm(): void {
     branch: 'main',
     credential: '',
     enabled: true,
+    preserveExisting: true,
   }
 }
 
 function startEdit(item: Medium): void {
   editingID.value = item.id
+  formNotice.value = ''
+  formError.value = ''
+  formDetail.value = ''
   form.value = {
     name: item.name,
     owner: item.settings?.owner ?? '',
@@ -55,6 +98,7 @@ function startEdit(item: Medium): void {
     branch: item.settings?.branch ?? 'main',
     credential: '',
     enabled: item.enabled,
+    preserveExisting: item.settings?.preserve_existing !== 'false',
   }
 }
 
@@ -71,12 +115,13 @@ async function refresh(): Promise<void> {
     return
   }
   loading.value = true
-  error.value = ''
+  clearError()
   try {
     me.value = await getMe(token.value)
     await loadMedia()
+    settings.value = await getSettings(token.value)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    showError(err)
     clearSession()
     token.value = ''
     me.value = null
@@ -103,36 +148,157 @@ function signOut(): void {
   token.value = ''
   me.value = null
   media.value = []
-  error.value = ''
+  clearError()
+  settings.value = { lunar_enabled: false, weather_enabled: false, weather_location: '' }
   resetForm()
 }
 
-async function saveMedium(): Promise<void> {
+async function saveSettings(): Promise<void> {
   if (!token.value) {
     return
   }
-  saving.value = true
-  error.value = ''
+  settingsSaving.value = true
+  clearError()
   try {
-    const input = {
-      name: form.value.name.trim(),
-      enabled: form.value.enabled,
-      settings: {
-        owner: form.value.owner.trim(),
-        repo: form.value.repo.trim(),
-        branch: form.value.branch.trim() || 'main',
-      },
-      credential: form.value.credential.trim() || undefined,
+    settings.value = await updateSettings(token.value, {
+      lunar_enabled: settings.value.lunar_enabled,
+      weather_enabled: settings.value.weather_enabled,
+      weather_location: settings.value.weather_location?.trim() || undefined,
+    })
+  } catch (err) {
+    showError(err)
+  } finally {
+    settingsSaving.value = false
+  }
+}
+
+function splitGitHubRef(value: string): { owner: string; repo: string } | null {
+  const raw = value.trim().replace(/\/+$/, '')
+  if (!raw) {
+    return null
+  }
+  const urlMatch = raw.match(/^(?:https?:\/\/)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i)
+  if (urlMatch) {
+    return { owner: urlMatch[1], repo: urlMatch[2] }
+  }
+  const sshMatch = raw.match(/^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i)
+  if (sshMatch) {
+    return { owner: sshMatch[1], repo: sshMatch[2] }
+  }
+  const pair = raw.match(/^([^/\s]+)\/([^/\s]+?)(?:\.git)?$/)
+  if (pair && !raw.includes(' ')) {
+    return { owner: pair[1], repo: pair[2] }
+  }
+  return null
+}
+
+function onRepoPaste(field: 'owner' | 'repo', event: Event): void {
+  const target = event.target as HTMLInputElement | null
+  const parsed = splitGitHubRef(target?.value ?? form.value[field])
+  if (!parsed) {
+    return
+  }
+  form.value.owner = parsed.owner
+  form.value.repo = parsed.repo
+  formNotice.value = `已从粘贴内容拆分为 ${parsed.owner}/${parsed.repo}`
+  clearFormFeedback()
+}
+
+function clearFormFeedback(): void {
+  formError.value = ''
+  formDetail.value = ''
+}
+
+function setFormError(message: string): void {
+  const split = splitGitHubDetail(message)
+  formError.value = split.summary
+  formDetail.value = split.detail
+}
+
+function validateForm(): string {
+  let owner = form.value.owner.trim()
+  let repo = form.value.repo.trim()
+  const branch = form.value.branch.trim() || 'main'
+  const fromOwner = splitGitHubRef(owner)
+  if (fromOwner) {
+    owner = fromOwner.owner
+    repo = fromOwner.repo
+    form.value.owner = owner
+    form.value.repo = repo
+    formNotice.value = `已自动拆分为 ${owner}/${repo}`
+  } else {
+    const fromRepo = splitGitHubRef(repo)
+    if (fromRepo) {
+      if (!owner) {
+        owner = fromRepo.owner
+      }
+      repo = fromRepo.repo
+      form.value.owner = owner
+      form.value.repo = repo
+      formNotice.value = `已自动拆分为 ${owner}/${repo}`
     }
+  }
+  repo = repo.replace(/\.git$/, '')
+  form.value.repo = repo
+  if (!owner || !repo) {
+    return 'owner 和 repo 不能为空。示例：owner 填 alice，repo 填 diary'
+  }
+  if (owner.includes('/') || !namePattern.test(owner)) {
+    return 'owner 只能包含字母、数字、下划线、点和连字符。示例：alice'
+  }
+  if (repo.includes('/') || !namePattern.test(repo)) {
+    return 'repo 只能包含字母、数字、下划线、点和连字符。示例：diary'
+  }
+  if (/\s/.test(branch) || branch.startsWith('/') || branch.includes('..')) {
+    return 'branch 不能包含空白、不能以 / 开头，也不能包含 ..。示例：main'
+  }
+  form.value.branch = branch
+  if (!editingID.value && !form.value.credential.trim()) {
+    return '新建时必须填写 Personal Access Token（细粒度 PAT，授予目标仓库 Contents: Read and write）'
+  }
+  return ''
+}
+
+function mediumInput() {
+  return {
+    kind: 'github',
+    name: form.value.name.trim(),
+    enabled: form.value.enabled,
+    settings: {
+      owner: form.value.owner.trim(),
+      repo: form.value.repo.trim(),
+      branch: form.value.branch.trim() || 'main',
+      preserve_existing: form.value.preserveExisting ? 'true' : 'false',
+    },
+    credential: form.value.credential.trim() || undefined,
+  }
+}
+
+async function saveMedium(): Promise<void> {
+  if (!token.value || saving.value) {
+    return
+  }
+  const problem = validateForm()
+  clearFormFeedback()
+  if (problem) {
+    setFormError(problem)
+    return
+  }
+  saving.value = true
+  clearError()
+  try {
+    const input = mediumInput()
     if (editingID.value) {
       await updateMedium(token.value, editingID.value, input)
     } else {
-      await createMedium(token.value, { ...input, kind: 'github' })
+      await createMedium(token.value, input)
     }
     resetForm()
     await loadMedia()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    const friendly = friendlyError(err)
+    formError.value = friendly.summary
+    formDetail.value = friendly.detail
   } finally {
     saving.value = false
   }
@@ -145,7 +311,7 @@ async function removeMedium(item: Medium): Promise<void> {
   if (!window.confirm(`删除存储介质「${item.name}」？`)) {
     return
   }
-  error.value = ''
+  clearError()
   try {
     await deleteMedium(token.value, item.id)
     if (editingID.value === item.id) {
@@ -153,7 +319,7 @@ async function removeMedium(item: Medium): Promise<void> {
     }
     await loadMedia()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    showError(err)
   }
 }
 
@@ -166,7 +332,7 @@ async function runSync(item: Medium): Promise<void> {
     return
   }
   syncingID.value = item.id
-  error.value = ''
+  clearError()
   try {
     const state = await triggerSync(token.value, item.id)
     applyState(item.id, state)
@@ -174,7 +340,7 @@ async function runSync(item: Medium): Promise<void> {
     if (err instanceof ApiError && err.state) {
       applyState(item.id, err.state)
     }
-    error.value = err instanceof Error ? err.message : String(err)
+    showError(err)
   } finally {
     syncingID.value = ''
   }
@@ -229,7 +395,13 @@ function repoLabel(item: Medium): string {
       <button class="secondary" @click="signOut">退出</button>
     </div>
 
-    <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="error" class="error">
+      {{ error }}
+      <details v-if="errorDetail">
+        <summary>查看详情</summary>
+        <pre>{{ errorDetail }}</pre>
+      </details>
+    </p>
     <p v-if="loading">加载中…</p>
 
     <section v-if="me">
@@ -245,8 +417,36 @@ function repoLabel(item: Medium): string {
     </section>
 
     <section v-if="me">
+      <h2>日记元数据</h2>
+      <p class="hint">
+        农历与天气作为元数据随日记保存，并在导出到 GitHub 时写入每天的标题行。天气需要填写城市名。
+      </p>
+      <form class="card" @submit.prevent="saveSettings">
+        <label class="check">
+          <input v-model="settings.lunar_enabled" type="checkbox" />
+          写入农历（按日期推算）
+        </label>
+        <label class="check">
+          <input v-model="settings.weather_enabled" type="checkbox" />
+          写入天气（Open-Meteo，免 key）
+        </label>
+        <label v-if="settings.weather_enabled">
+          城市名
+          <input v-model="settings.weather_location" placeholder="Beijing" />
+        </label>
+        <div class="actions">
+          <button type="submit" :disabled="settingsSaving">
+            {{ settingsSaving ? '保存中…' : '保存元数据设置' }}
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <section v-if="me">
       <h2>存储介质</h2>
-      <p class="hint">配置仅能在此页面完成。Token 只在提交时通过已登录会话传输，接口与页面均不回显明文。</p>
+      <p class="hint">
+        添加或保存时会检查 token、仓库和分支，通过后才写入。Token 不会回显。
+      </p>
 
       <form class="card" @submit.prevent="saveMedium">
         <h3>{{ formTitle }}</h3>
@@ -256,15 +456,27 @@ function repoLabel(item: Medium): string {
         </label>
         <label>
           GitHub owner
-          <input v-model="form.owner" required placeholder="your-name" />
+          <input
+            v-model="form.owner"
+            required
+            placeholder="your-name"
+            @input="clearFormFeedback"
+            @change="onRepoPaste('owner', $event)"
+          />
         </label>
         <label>
           仓库
-          <input v-model="form.repo" required placeholder="diary" />
+          <input
+            v-model="form.repo"
+            required
+            placeholder="diary，或粘贴 https://github.com/owner/repo"
+            @input="clearFormFeedback"
+            @change="onRepoPaste('repo', $event)"
+          />
         </label>
         <label>
           分支
-          <input v-model="form.branch" placeholder="main" />
+          <input v-model="form.branch" placeholder="main" @input="clearFormFeedback" />
         </label>
         <label>
           Personal Access Token
@@ -274,15 +486,28 @@ function repoLabel(item: Medium): string {
             autocomplete="off"
             :placeholder="editingID ? '留空则保留已保存的 token' : 'ghp_… 细粒度 PAT，仅授予目标仓库 Contents 读写'"
             :required="!editingID"
+            @input="clearFormFeedback"
           />
         </label>
         <label class="check">
           <input v-model="form.enabled" type="checkbox" />
           启用同步
         </label>
+        <label class="check">
+          <input v-model="form.preserveExisting" type="checkbox" />
+          保留远端已有日记（按日期合并，不覆盖旧日期）
+        </label>
+        <p v-if="formNotice" class="hint">{{ formNotice }}</p>
+        <p v-if="formError" class="error">
+          {{ formError }}
+          <details v-if="formDetail">
+            <summary>查看详情</summary>
+            <pre>{{ formDetail }}</pre>
+          </details>
+        </p>
         <div class="actions">
-          <button type="submit" :disabled="saving">{{ editingID ? '保存修改' : '添加' }}</button>
-          <button v-if="editingID" type="button" class="secondary" @click="resetForm">取消</button>
+          <button type="submit" :disabled="saving">{{ submitLabel }}</button>
+          <button v-if="editingID" type="button" class="secondary" :disabled="saving" @click="resetForm">取消</button>
         </div>
       </form>
 
@@ -299,7 +524,15 @@ function repoLabel(item: Medium): string {
             {{ item.has_credential ? '已保存凭证（已脱敏）' : '未保存凭证' }} ·
             最近同步：{{ formatTime(item.state?.last_synced_at) }}
           </p>
-          <p v-if="item.state?.last_error" class="error">{{ item.state.last_error }}</p>
+          <p v-if="item.state?.last_error" class="error">
+            <template v-for="shown in [splitGitHubDetail(item.state.last_error)]" :key="shown.summary">
+              {{ shown.summary }}
+              <details v-if="shown.detail">
+                <summary>查看详情</summary>
+                <pre>{{ shown.detail }}</pre>
+              </details>
+            </template>
+          </p>
           <ul v-if="item.state?.documents && Object.keys(item.state.documents).length" class="docs">
             <li v-for="doc in Object.values(item.state.documents)" :key="doc.path">
               {{ doc.path }}
@@ -478,5 +711,22 @@ input:not([type]) {
   padding-left: 1.1rem;
   color: #666;
   font-size: 0.9rem;
+}
+
+details {
+  margin-top: 0.35rem;
+}
+
+details summary {
+  cursor: pointer;
+  color: #666;
+}
+
+pre {
+  margin: 0.35rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8rem;
+  color: #666;
 }
 </style>

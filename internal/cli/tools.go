@@ -5,6 +5,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/gogodjzhu/mcp-diary/internal/app"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/spf13/cobra"
@@ -28,7 +29,10 @@ func newToolsCommand() *cobra.Command {
 				return err
 			}
 
-			registry := app.BuildRegistry(workspaces, nil)
+			registry, err := app.BuildRegistry(workspaces, diary.New(nil, nil))
+			if err != nil {
+				return err
+			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tDESCRIPTION")

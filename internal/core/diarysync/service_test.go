@@ -1,4 +1,4 @@
-package sync
+package diarysync
 
 import (
 	"bytes"
@@ -34,7 +34,7 @@ func testService(t *testing.T) (*Service, *filesystem.Service, *MemoryProvider, 
 	}
 	provider := NewMemoryProvider(KindGitHub, func() time.Time { return now })
 	reg := NewRegistry()
-	reg.Register(KindGitHub, func(Medium, string) (Provider, error) { return provider, nil })
+	reg.Register(KindGitHub, fixedFactory(provider))
 	svc := New(codec, reg, func() time.Time { return now })
 	return svc, testFS(t), provider, now
 }
@@ -91,6 +91,64 @@ func TestUpsertEncryptsCredentialAndHidesIt(t *testing.T) {
 	}
 }
 
+func TestUpsertNormalizesGitHubAndRequiresCredential(t *testing.T) {
+	svc, fs, _, _ := testService(t)
+	ctx := context.Background()
+	got, err := svc.Upsert(ctx, fs, UpsertIn{
+		Kind:       KindGitHub,
+		Name:       "github",
+		Credential: "ghp_xxx",
+		Settings:   map[string]string{"repo": "https://github.com/Alice/Diary.git", "preserve_existing": "false"},
+	})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if got.Settings["owner"] != "Alice" || got.Settings["repo"] != "Diary" || got.Settings["branch"] != "main" {
+		t.Fatalf("settings = %+v", got.Settings)
+	}
+	if got.Settings["preserve_existing"] != "false" {
+		t.Fatalf("preserve_existing lost: %+v", got.Settings)
+	}
+
+	_, err = svc.Upsert(ctx, fs, UpsertIn{
+		Kind:     KindGitHub,
+		Name:     "missing token",
+		Settings: map[string]string{"owner": "alice", "repo": "diary"},
+	})
+	if !errors.Is(err, ErrGitHubCredential) {
+		t.Fatalf("err = %v, want credential", err)
+	}
+
+	_, err = svc.Upsert(ctx, fs, UpsertIn{
+		Kind:       KindGitHub,
+		Name:       "bad branch",
+		Credential: "ghp_xxx",
+		Settings:   map[string]string{"owner": "alice", "repo": "diary", "branch": ".."},
+	})
+	if !errors.Is(err, ErrGitHubSettings) {
+		t.Fatalf("err = %v, want settings", err)
+	}
+
+	updated, err := svc.Upsert(ctx, fs, UpsertIn{
+		ID:   got.ID,
+		Name: "github",
+		Settings: map[string]string{
+			"owner":             "https://github.com/bob/notes",
+			"repo":              "ignored",
+			"preserve_existing": "true",
+		},
+	})
+	if err != nil {
+		t.Fatalf("edit without credential: %v", err)
+	}
+	if updated.Settings["owner"] != "bob" || updated.Settings["repo"] != "notes" {
+		t.Fatalf("normalized edit = %+v", updated.Settings)
+	}
+	if !updated.HasCredential {
+		t.Fatal("blank credential should keep the stored token")
+	}
+}
+
 func TestRejectCredentialInSettings(t *testing.T) {
 	svc, fs, _, _ := testService(t)
 	_, err := svc.Upsert(context.Background(), fs, UpsertIn{
@@ -111,6 +169,7 @@ func TestCredentialRequiresEncryptionKey(t *testing.T) {
 		Kind:       KindGitHub,
 		Name:       "github",
 		Credential: "ghp_xxx",
+		Settings:   map[string]string{"owner": "alice", "repo": "diary"},
 	})
 	if !errors.Is(err, ErrNoEncryptionKey) {
 		t.Fatalf("err = %v, want ErrNoEncryptionKey", err)
@@ -194,7 +253,10 @@ func TestFakeProviderPushDeleteStatus(t *testing.T) {
 func TestAttachmentChannelReserved(t *testing.T) {
 	svc, fs, _, _ := testService(t)
 	ctx := context.Background()
-	medium, err := svc.Upsert(ctx, fs, UpsertIn{Kind: KindGitHub, Name: "github", Credential: "x"})
+	medium, err := svc.Upsert(ctx, fs, UpsertIn{
+		Kind: KindGitHub, Name: "github", Credential: "x",
+		Settings: map[string]string{"owner": "alice", "repo": "diary"},
+	})
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
@@ -258,7 +320,10 @@ func TestHexEncryptionKey(t *testing.T) {
 func TestTriggerUsesEngineAndRecordsFailureWithoutOne(t *testing.T) {
 	svc, fs, _, _ := testService(t)
 	ctx := context.Background()
-	medium, err := svc.Upsert(ctx, fs, UpsertIn{Kind: KindGitHub, Name: "github", Credential: "x"})
+	medium, err := svc.Upsert(ctx, fs, UpsertIn{
+		Kind: KindGitHub, Name: "github", Credential: "x",
+		Settings: map[string]string{"owner": "alice", "repo": "diary"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,10 +354,74 @@ func TestTriggerUsesEngineAndRecordsFailureWithoutOne(t *testing.T) {
 	}
 }
 
+func TestTriggerRejectsUnreachableMedium(t *testing.T) {
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	codec, err := NewCodec(testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry()
+	reg.Register(KindGitHub, probingFactory{inner: fixedFactory(failingProbe{})})
+	svc := New(codec, reg, func() time.Time { return now })
+	fs := testFS(t)
+	ctx := context.Background()
+	medium := &Medium{
+		ID: "sm_saved", Kind: KindGitHub, Name: "github", Enabled: true,
+		Settings: map[string]string{"owner": "alice", "repo": "diary", "branch": "test"},
+		Secret:   Secret{Ciphertext: mustEncrypt(t, codec, "ghp_x")},
+	}
+	st, err := svc.storeFor(ctx, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.commit(ctx, preparedMedium{Medium: *medium, Kind: KindGitHub}); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetRunner(funcRunner(func(context.Context, *filesystem.Service, string) error {
+		t.Fatal("runner should not run when the probe fails")
+		return nil
+	}))
+
+	state, err := svc.Trigger(ctx, fs, medium.ID)
+	var verify *VerifyError
+	if !errors.As(err, &verify) || !strings.Contains(err.Error(), "分支 test 不存在") {
+		t.Fatalf("err = %v", err)
+	}
+	if state == nil || state.Status != StatusFailed {
+		t.Fatalf("state = %+v", state)
+	}
+}
+
+func mustEncrypt(t *testing.T, codec *Codec, plain string) string {
+	t.Helper()
+	out, err := codec.Encrypt(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+type probingFactory struct{ inner Factory }
+
+func (f probingFactory) Probe() bool { return true }
+
+func (f probingFactory) Open(medium Medium, credential string) (Provider, error) {
+	return f.inner.Open(medium, credential)
+}
+
+type failingProbe struct{ failingProvider }
+
+func (failingProbe) Verify(context.Context) (VerifyResult, error) {
+	return VerifyResult{OK: false, Checks: []VerifyCheck{{Name: "branch", Message: "分支 test 不存在"}}}, nil
+}
+
 func TestListViewsIncludesState(t *testing.T) {
 	svc, fs, _, _ := testService(t)
 	ctx := context.Background()
-	if _, err := svc.Upsert(ctx, fs, UpsertIn{Kind: KindGitHub, Name: "github", Credential: "x"}); err != nil {
+	if _, err := svc.Upsert(ctx, fs, UpsertIn{
+		Kind: KindGitHub, Name: "github", Credential: "x",
+		Settings: map[string]string{"owner": "alice", "repo": "diary"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	views, err := svc.ListViews(ctx, fs)
@@ -336,13 +465,14 @@ func TestPushFailureRecorded(t *testing.T) {
 	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	codec, _ := NewCodec(testKey)
 	reg := NewRegistry()
-	reg.Register(KindGitHub, func(Medium, string) (Provider, error) {
-		return failingProvider{}, nil
-	})
+	reg.Register(KindGitHub, fixedFactory(failingProvider{}))
 	svc := New(codec, reg, func() time.Time { return now })
 	fs := testFS(t)
 	ctx := context.Background()
-	medium, err := svc.Upsert(ctx, fs, UpsertIn{Kind: KindGitHub, Name: "github", Credential: "x"})
+	medium, err := svc.Upsert(ctx, fs, UpsertIn{
+		Kind: KindGitHub, Name: "github", Credential: "x",
+		Settings: map[string]string{"owner": "alice", "repo": "diary"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,4 +500,10 @@ func (failingProvider) Delete(context.Context, DocumentRef) (Result, error) {
 }
 func (failingProvider) Status(context.Context, DocumentRef) (RemoteStatus, error) {
 	return RemoteStatus{}, errors.New("remote unavailable")
+}
+func (failingProvider) Get(context.Context, DocumentRef) ([]byte, bool, error) {
+	return nil, false, errors.New("remote unavailable")
+}
+func (failingProvider) Verify(context.Context) (VerifyResult, error) {
+	return VerifyResult{}, errors.New("remote unavailable")
 }

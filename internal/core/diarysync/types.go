@@ -1,4 +1,4 @@
-package sync
+package diarysync
 
 import (
 	"log/slog"
@@ -103,6 +103,7 @@ func (m Medium) String() string {
 
 type Source struct {
 	EntryIDs  []string  `json:"entry_ids,omitempty"`
+	Dates     []string  `json:"dates,omitempty"`
 	Revision  int       `json:"revision,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
@@ -140,10 +141,27 @@ type RemoteStatus struct {
 	UpdatedAt time.Time
 }
 
+// VerifyCheck is one step of a connection probe.
+type VerifyCheck struct {
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Message string `json:"message,omitempty"`
+}
+
+// VerifyResult is the structured outcome of probing a storage medium.
+type VerifyResult struct {
+	OK     bool          `json:"ok"`
+	Checks []VerifyCheck `json:"checks"`
+}
+
 type DocumentState struct {
-	Path         string    `json:"path"`
-	RemoteID     string    `json:"remote_id,omitempty"`
-	EntryIDs     []string  `json:"entry_ids,omitempty"`
+	Path     string   `json:"path"`
+	RemoteID string   `json:"remote_id,omitempty"`
+	EntryIDs []string `json:"entry_ids,omitempty"`
+	// Dates are the diary dates this medium last wrote. Days are only ever
+	// replaced or removed while they are listed here; anything else in the
+	// remote file is treated as pre-existing and preserved.
+	Dates        []string  `json:"dates,omitempty"`
 	Revision     int       `json:"revision,omitempty"`
 	LastSyncedAt time.Time `json:"last_synced_at,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
@@ -207,6 +225,7 @@ func cloneState(src *SyncState) *SyncState {
 	cp.Documents = make(map[string]DocumentState, len(src.Documents))
 	for k, v := range src.Documents {
 		v.EntryIDs = cloneStrings(v.EntryIDs)
+		v.Dates = cloneStrings(v.Dates)
 		cp.Documents[k] = v
 	}
 	return &cp

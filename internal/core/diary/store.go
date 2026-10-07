@@ -3,23 +3,23 @@ package diary
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
+	"github.com/gogodjzhu/mcp-diary/internal/core/persist"
 )
 
 // storePath is the workspace-relative location of the diary store file.
 const storePath = ".mcp-diary/diary.json"
 
 type storeFile struct {
-	Sessions     map[string]*Session `json:"sessions"`
-	Entries      map[string]*Entry   `json:"entries"`
-	Idempotency  map[string]any      `json:"idempotency"`
-	DateSessions map[string]string   `json:"date_sessions"`
-	DateEntries  map[string]string   `json:"date_entries"`
+	Sessions     map[string]*Session        `json:"sessions"`
+	Entries      map[string]*Entry          `json:"entries"`
+	Idempotency  map[string]json.RawMessage `json:"idempotency"`
+	DateSessions map[string]string          `json:"date_sessions"`
+	DateEntries  map[string]string          `json:"date_entries"`
 }
 
 // Store persists one workspace's diary data. Every IO operation goes through
@@ -42,7 +42,7 @@ func newStore(fs *filesystem.Service, now func() time.Time) *Store {
 		data: storeFile{
 			Sessions:     map[string]*Session{},
 			Entries:      map[string]*Entry{},
-			Idempotency:  map[string]any{},
+			Idempotency:  map[string]json.RawMessage{},
 			DateSessions: map[string]string{},
 			DateEntries:  map[string]string{},
 		},
@@ -51,17 +51,7 @@ func newStore(fs *filesystem.Service, now func() time.Time) *Store {
 
 func loadStore(ctx context.Context, fs *filesystem.Service, now func() time.Time) (*Store, error) {
 	s := newStore(fs, now)
-	b, err := fs.ReadFile(ctx, storePath)
-	if err != nil {
-		if errors.Is(err, filesystem.ErrNotFound) {
-			return s, nil
-		}
-		return nil, err
-	}
-	if len(b) == 0 {
-		return s, nil
-	}
-	if err := json.Unmarshal(b, &s.data); err != nil {
+	if err := persist.Load(ctx, fs, storePath, &s.data); err != nil {
 		return nil, err
 	}
 	if s.data.Sessions == nil {
@@ -71,7 +61,7 @@ func loadStore(ctx context.Context, fs *filesystem.Service, now func() time.Time
 		s.data.Entries = map[string]*Entry{}
 	}
 	if s.data.Idempotency == nil {
-		s.data.Idempotency = map[string]any{}
+		s.data.Idempotency = map[string]json.RawMessage{}
 	}
 	if s.data.DateSessions == nil {
 		s.data.DateSessions = map[string]string{}
@@ -84,15 +74,7 @@ func loadStore(ctx context.Context, fs *filesystem.Service, now func() time.Time
 
 // persistLocked atomically replaces the store file. Callers must hold s.mu.
 func (s *Store) persistLocked(ctx context.Context) error {
-	b, err := json.MarshalIndent(s.data, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = s.fs.WriteAtomic(ctx, storePath, string(b), filesystem.WriteOptions{
-		CreateDirs: true,
-		Mode:       0o600,
-	})
-	return err
+	return persist.Save(ctx, s.fs, storePath, s.data)
 }
 
 func cloneSession(src *Session) *Session {
@@ -104,6 +86,15 @@ func cloneSession(src *Session) *Session {
 }
 
 func cloneEntry(src *Entry) *Entry {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	cp.Meta = cloneMeta(src.Meta)
+	return &cp
+}
+
+func cloneMeta(src *EntryMeta) *EntryMeta {
 	if src == nil {
 		return nil
 	}

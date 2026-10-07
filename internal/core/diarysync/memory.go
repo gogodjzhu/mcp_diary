@@ -1,8 +1,8 @@
-package sync
+package diarysync
 
 import (
 	"context"
-	stdsync "sync"
+	"sync"
 	"time"
 )
 
@@ -10,7 +10,7 @@ type MemoryProvider struct {
 	kind Kind
 	now  func() time.Time
 
-	mu    stdsync.Mutex
+	mu    sync.Mutex
 	files map[string]memoryFile
 }
 
@@ -34,12 +34,17 @@ func NewMemoryProvider(kind Kind, now func() time.Time) *MemoryProvider {
 	}
 }
 
+type memoryFactory struct{ provider Provider }
+
+func (f memoryFactory) Probe() bool { return false }
+
+func (f memoryFactory) Open(Medium, string) (Provider, error) { return f.provider, nil }
+
 func MemoryFactory(kind Kind, now func() time.Time) Factory {
-	shared := NewMemoryProvider(kind, now)
-	return func(Medium, string) (Provider, error) {
-		return shared, nil
-	}
+	return memoryFactory{provider: NewMemoryProvider(kind, now)}
 }
+
+func fixedFactory(provider Provider) Factory { return memoryFactory{provider: provider} }
 
 func (p *MemoryProvider) Kind() Kind { return p.kind }
 
@@ -84,6 +89,36 @@ func (p *MemoryProvider) Status(ctx context.Context, ref DocumentRef) (RemoteSta
 		return RemoteStatus{Path: ref.Path, Exists: false}, nil
 	}
 	return RemoteStatus{Path: ref.Path, Exists: true, RemoteID: f.remoteID, UpdatedAt: f.updatedAt}, nil
+}
+
+func (p *MemoryProvider) Verify(ctx context.Context) (VerifyResult, error) {
+	if err := ctx.Err(); err != nil {
+		return VerifyResult{}, err
+	}
+	return VerifyResult{
+		OK: true,
+		Checks: []VerifyCheck{
+			{Name: "token", OK: true, Message: "token 有效"},
+			{Name: "repository", OK: true, Message: "仓库可访问"},
+			{Name: "branch", OK: true, Message: "分支存在"},
+		},
+	}, nil
+}
+
+func (p *MemoryProvider) Get(ctx context.Context, ref DocumentRef) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if ref.Kind == DocumentAttachment {
+		return nil, false, ErrAttachmentNotSupported
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	f, ok := p.files[ref.Path]
+	if !ok {
+		return nil, false, nil
+	}
+	return append([]byte(nil), f.body...), true, nil
 }
 
 func (p *MemoryProvider) Body(path string) []byte {

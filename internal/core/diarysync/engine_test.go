@@ -1,4 +1,4 @@
-package sync
+package diarysync
 
 import (
 	"context"
@@ -22,7 +22,7 @@ func testEngine(t *testing.T) (*Engine, *Service, *diary.Service, *filesystem.Se
 	}
 	mem := NewMemoryProvider(KindGitHub, func() time.Time { return now })
 	reg := NewRegistry()
-	reg.Register(KindGitHub, func(Medium, string) (Provider, error) { return mem, nil })
+	reg.Register(KindGitHub, fixedFactory(mem))
 	syncSvc := New(codec, reg, func() time.Time { return now })
 	diarySvc := diary.New(func() time.Time { return now }, time.UTC)
 	engine := NewEngine(syncSvc, diarySvc, 20*time.Millisecond, func() time.Time { return now }, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -51,7 +51,7 @@ func commitDate(t *testing.T, svc *diary.Service, fs *filesystem.Service, date, 
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	sess := created.(*diary.Session)
+	sess := created
 	if _, err := svc.AppendSession(context.Background(), fs, diary.AppendSessionIn{
 		RequestID: req + "_a", SessionID: sess.SessionID, ExpectedRevision: 1, Content: content,
 	}); err != nil {
@@ -74,14 +74,17 @@ func TestEnginePushesMonthlyMarkdownAndDeletesEmptyMonth(t *testing.T) {
 	if err := engine.TriggerFull(ctx, fs); err != nil {
 		t.Fatalf("TriggerFull: %v", err)
 	}
-	body := string(mem.Body("diary/2026/2026-10.md"))
+	body := string(mem.Body("2026/2026-10.md"))
 	if body == "" {
 		t.Fatal("expected monthly file")
 	}
-	if !strings.Contains(body, "## 2026-10-04") || !strings.Contains(body, "## 2026-10-01") {
+	if !strings.Contains(body, "2026-10-04") || !strings.Contains(body, "2026-10-01") {
 		t.Fatalf("missing days:\n%s", body)
 	}
-	if strings.Index(body, "## 2026-10-04") > strings.Index(body, "## 2026-10-01") {
+	if !strings.Contains(body, daySeparator) {
+		t.Fatalf("missing day separator:\n%s", body)
+	}
+	if strings.Index(body, "2026-10-04") > strings.Index(body, "2026-10-01") {
 		t.Fatalf("days not descending:\n%s", body)
 	}
 
@@ -89,7 +92,7 @@ func TestEnginePushesMonthlyMarkdownAndDeletesEmptyMonth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ds := st.Documents["diary/2026/2026-10.md"]
+	ds := st.Documents["2026/2026-10.md"]
 	if ds.Revision == 0 || len(ds.EntryIDs) != 2 {
 		t.Fatalf("document state = %+v", ds)
 	}
@@ -110,7 +113,7 @@ func TestEnginePushesMonthlyMarkdownAndDeletesEmptyMonth(t *testing.T) {
 	if err := engine.SyncNow(ctx, fs, "2026-10-01"); err != nil {
 		t.Fatalf("SyncNow after one delete: %v", err)
 	}
-	body = string(mem.Body("diary/2026/2026-10.md"))
+	body = string(mem.Body("2026/2026-10.md"))
 	if strings.Contains(body, "first day") {
 		t.Fatalf("deleted day still present:\n%s", body)
 	}
@@ -124,8 +127,33 @@ func TestEnginePushesMonthlyMarkdownAndDeletesEmptyMonth(t *testing.T) {
 	if err := engine.SyncNow(ctx, fs, "2026-10-04"); err != nil {
 		t.Fatalf("SyncNow empty month: %v", err)
 	}
-	if mem.Body("diary/2026/2026-10.md") != nil {
+	if mem.Body("2026/2026-10.md") != nil {
 		t.Fatal("empty month should delete remote file")
+	}
+}
+
+func TestEngineSyncAllTargetsSingleMedium(t *testing.T) {
+	engine, syncSvc, diarySvc, fs, mem := testEngine(t)
+	ctx := context.Background()
+	first := upsertGitHub(t, syncSvc, fs)
+	if _, err := syncSvc.Upsert(ctx, fs, UpsertIn{
+		Kind:       KindGitHub,
+		Name:       "second",
+		Credential: "ghp_yyy",
+		Settings:   map[string]string{"owner": "alice", "repo": "other"},
+	}); err != nil {
+		t.Fatalf("Upsert second: %v", err)
+	}
+	commitDate(t, diarySvc, fs, "2026-10-04", "single target", "sa")
+
+	if err := engine.SyncAll(ctx, fs, first.ID); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+	if mem.Body("2026/2026-10.md") == nil {
+		t.Fatal("expected push for the targeted medium")
+	}
+	if err := engine.SyncAll(ctx, fs, "sm_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SyncAll unknown medium err = %v, want ErrNotFound", err)
 	}
 }
 
@@ -136,12 +164,12 @@ func TestEngineDebouncesMultipleCommits(t *testing.T) {
 	commitDate(t, diarySvc, fs, "2026-10-05", "two", "d2")
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if mem.Body("diary/2026/2026-10.md") != nil {
+		if mem.Body("2026/2026-10.md") != nil {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if mem.Body("diary/2026/2026-10.md") == nil {
+	if mem.Body("2026/2026-10.md") == nil {
 		t.Fatal("debounced push never landed")
 	}
 }
@@ -151,7 +179,7 @@ func TestEngineRetriesTransientPush(t *testing.T) {
 	codec, _ := NewCodec(testKey)
 	flaky := &flakyProvider{failTimes: 2, inner: NewMemoryProvider(KindGitHub, func() time.Time { return now })}
 	reg := NewRegistry()
-	reg.Register(KindGitHub, func(Medium, string) (Provider, error) { return flaky, nil })
+	reg.Register(KindGitHub, fixedFactory(flaky))
 	syncSvc := New(codec, reg, func() time.Time { return now })
 	diarySvc := diary.New(func() time.Time { return now }, time.UTC)
 	engine := NewEngine(syncSvc, diarySvc, time.Millisecond, func() time.Time { return now }, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -166,20 +194,27 @@ func TestEngineRetriesTransientPush(t *testing.T) {
 	if flaky.calls < 3 {
 		t.Fatalf("calls = %d, want retries", flaky.calls)
 	}
-	if flaky.inner.Body("diary/2026/2026-10.md") == nil {
+	if flaky.inner.Body("2026/2026-10.md") == nil {
 		t.Fatal("expected eventual push")
 	}
 }
 
 func TestEngineSkipsUnchangedMonth(t *testing.T) {
 	engine, syncSvc, diarySvc, fs, mem := testEngine(t)
-	upsertGitHub(t, syncSvc, fs)
+	if _, err := syncSvc.Upsert(context.Background(), fs, UpsertIn{
+		Kind:       KindGitHub,
+		Name:       "github",
+		Credential: "ghp_xxx",
+		Settings:   map[string]string{"owner": "alice", "repo": "diary", "preserve_existing": "false"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	commitDate(t, diarySvc, fs, "2026-10-04", "same", "s1")
 	if err := engine.TriggerFull(context.Background(), fs); err != nil {
 		t.Fatal(err)
 	}
 	counting := &countingProvider{inner: mem}
-	syncSvc.registry.Register(KindGitHub, func(Medium, string) (Provider, error) { return counting, nil })
+	syncSvc.registry.Register(KindGitHub, fixedFactory(counting))
 	if err := engine.SyncNow(context.Background(), fs, "2026-10-04"); err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +226,73 @@ func TestEngineSkipsUnchangedMonth(t *testing.T) {
 	}
 	if counting.pushes != 1 {
 		t.Fatalf("full resync should push once, got %d", counting.pushes)
+	}
+}
+
+func TestEnginePreservesPreexistingRemoteOnFirstSync(t *testing.T) {
+	engine, syncSvc, diarySvc, fs, mem := testEngine(t)
+	upsertGitHub(t, syncSvc, fs)
+	ctx := context.Background()
+
+	// A day already present remotely but not in the local store.
+	remote := []byte(daySeparator + "\n\n2026-10-01，四\n\nold remote day\n")
+	if _, err := mem.Push(ctx, Document{Kind: DocumentText, Path: "2026/2026-10.md", Body: remote}); err != nil {
+		t.Fatal(err)
+	}
+
+	commitDate(t, diarySvc, fs, "2026-10-04", "new local day", "ps1")
+	if err := engine.TriggerFull(ctx, fs); err != nil {
+		t.Fatalf("TriggerFull: %v", err)
+	}
+	body := string(mem.Body("2026/2026-10.md"))
+	if !strings.Contains(body, "old remote day") {
+		t.Fatalf("pre-existing remote day was overwritten:\n%s", body)
+	}
+	if !strings.Contains(body, "new local day") {
+		t.Fatalf("new local day not synced:\n%s", body)
+	}
+
+	// A later local change to the same month must still preserve the
+	// pre-existing remote day.
+	commitDate(t, diarySvc, fs, "2026-10-05", "another local day", "ps2")
+	if err := engine.SyncNow(ctx, fs, "2026-10-05"); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	body = string(mem.Body("2026/2026-10.md"))
+	if !strings.Contains(body, "old remote day") {
+		t.Fatalf("pre-existing remote day lost on later sync:\n%s", body)
+	}
+	if !strings.Contains(body, "new local day") || !strings.Contains(body, "another local day") {
+		t.Fatalf("local days missing after later sync:\n%s", body)
+	}
+}
+
+func TestEngineOverwritesWhenPreserveDisabled(t *testing.T) {
+	engine, syncSvc, diarySvc, fs, mem := testEngine(t)
+	if _, err := syncSvc.Upsert(context.Background(), fs, UpsertIn{
+		Kind:       KindGitHub,
+		Name:       "github",
+		Credential: "ghp_xxx",
+		Settings:   map[string]string{"owner": "alice", "repo": "diary", "preserve_existing": "false"},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	ctx := context.Background()
+
+	remote := []byte(daySeparator + "\n\n2026-10-01，四\n\nold remote day\n")
+	if _, err := mem.Push(ctx, Document{Kind: DocumentText, Path: "2026/2026-10.md", Body: remote}); err != nil {
+		t.Fatal(err)
+	}
+	commitDate(t, diarySvc, fs, "2026-10-04", "new local day", "pd1")
+	if err := engine.TriggerFull(ctx, fs); err != nil {
+		t.Fatalf("TriggerFull: %v", err)
+	}
+	body := string(mem.Body("2026/2026-10.md"))
+	if strings.Contains(body, "old remote day") {
+		t.Fatalf("preserve_existing=false should overwrite:\n%s", body)
+	}
+	if !strings.Contains(body, "new local day") {
+		t.Fatalf("new local day not synced:\n%s", body)
 	}
 }
 
@@ -214,6 +316,12 @@ func (p *flakyProvider) Delete(ctx context.Context, ref DocumentRef) (Result, er
 func (p *flakyProvider) Status(ctx context.Context, ref DocumentRef) (RemoteStatus, error) {
 	return p.inner.Status(ctx, ref)
 }
+func (p *flakyProvider) Get(ctx context.Context, ref DocumentRef) ([]byte, bool, error) {
+	return p.inner.Get(ctx, ref)
+}
+func (p *flakyProvider) Verify(ctx context.Context) (VerifyResult, error) {
+	return p.inner.Verify(ctx)
+}
 
 type countingProvider struct {
 	inner  *MemoryProvider
@@ -230,4 +338,60 @@ func (p *countingProvider) Delete(ctx context.Context, ref DocumentRef) (Result,
 }
 func (p *countingProvider) Status(ctx context.Context, ref DocumentRef) (RemoteStatus, error) {
 	return p.inner.Status(ctx, ref)
+}
+func (p *countingProvider) Get(ctx context.Context, ref DocumentRef) ([]byte, bool, error) {
+	return p.inner.Get(ctx, ref)
+}
+func (p *countingProvider) Verify(ctx context.Context) (VerifyResult, error) {
+	return p.inner.Verify(ctx)
+}
+
+type statusErr struct{ code int }
+
+func (e statusErr) Error() string { return "upstream" }
+
+func (e statusErr) StatusCode() int { return e.code }
+
+func TestWithRetrySkipsClientErrors(t *testing.T) {
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	engine := NewEngine(nil, nil, time.Millisecond, func() time.Time { return now }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(engine.Stop)
+	engine.sleep = func(time.Duration) {}
+
+	calls := 0
+	err := engine.withRetry(context.Background(), func() error {
+		calls++
+		return &HTTPStatusError{Status: 404, Message: "missing"}
+	})
+	if calls != 1 {
+		t.Fatalf("404 calls = %d, want 1", calls)
+	}
+	var hs *HTTPStatusError
+	if !errors.As(err, &hs) || hs.Status != 404 {
+		t.Fatalf("err = %v", err)
+	}
+
+	calls = 0
+	err = engine.withRetry(context.Background(), func() error {
+		calls++
+		return statusErr{code: 429}
+	})
+	if calls != engine.maxRetry+1 {
+		t.Fatalf("429 calls = %d, want %d", calls, engine.maxRetry+1)
+	}
+	if _, ok := StatusCode(err); !ok {
+		t.Fatalf("err = %v", err)
+	}
+
+	calls = 0
+	err = engine.withRetry(context.Background(), func() error {
+		calls++
+		return errors.New("temporary")
+	})
+	if calls != engine.maxRetry+1 {
+		t.Fatalf("network calls = %d, want %d", calls, engine.maxRetry+1)
+	}
+	if err == nil || err.Error() != "temporary" {
+		t.Fatalf("err = %v", err)
+	}
 }

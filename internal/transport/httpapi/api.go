@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
+	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
-	"github.com/gogodjzhu/mcp-diary/internal/core/sync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
@@ -24,6 +24,10 @@ func (h *Handler) handleMe(w http.ResponseWriter, id *identity.Identity) {
 }
 
 func (h *Handler) handleMediaCollection(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Sync == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "sync is not configured")
+		return
+	}
 	fs, ok := h.workspaceFS(w, r)
 	if !ok {
 		return
@@ -39,6 +43,10 @@ func (h *Handler) handleMediaCollection(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) handleMediaItem(w http.ResponseWriter, r *http.Request, rest string) {
+	if h.cfg.Sync == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "sync is not configured")
+		return
+	}
 	id, action, ok := splitMediaPath(rest)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "unknown API endpoint")
@@ -91,8 +99,8 @@ func splitMediaPath(rest string) (id, action string, ok bool) {
 }
 
 func (h *Handler) workspaceFS(w http.ResponseWriter, r *http.Request) (*filesystem.Service, bool) {
-	if h.cfg.Workspaces == nil || h.cfg.Sync == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "sync is not configured")
+	if h.cfg.Workspaces == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "workspaces are not configured")
 		return nil, false
 	}
 	fs, err := h.cfg.Workspaces.Filesystem(r.Context())
@@ -114,7 +122,7 @@ func (h *Handler) listMedia(w http.ResponseWriter, r *http.Request, fs *filesyst
 		return
 	}
 	if views == nil {
-		views = []sync.MediumView{}
+		views = []diarysync.MediumView{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"media": views})
 }
@@ -130,7 +138,7 @@ func (h *Handler) getMedia(w http.ResponseWriter, r *http.Request, fs *filesyste
 		writeSyncError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, sync.MediumView{PublicMedium: *pub, State: *st})
+	writeJSON(w, http.StatusOK, diarysync.MediumView{PublicMedium: *pub, State: *st})
 }
 
 type mediaBody struct {
@@ -146,8 +154,8 @@ func (h *Handler) createMedia(w http.ResponseWriter, r *http.Request, fs *filesy
 	if !ok {
 		return
 	}
-	pub, err := h.cfg.Sync.Upsert(r.Context(), fs, sync.UpsertIn{
-		Kind:       sync.Kind(strings.TrimSpace(body.Kind)),
+	pub, err := h.cfg.Sync.Upsert(r.Context(), fs, diarysync.UpsertIn{
+		Kind:       diarysync.Kind(strings.TrimSpace(body.Kind)),
 		Name:       body.Name,
 		Enabled:    body.Enabled,
 		Settings:   body.Settings,
@@ -162,7 +170,7 @@ func (h *Handler) createMedia(w http.ResponseWriter, r *http.Request, fs *filesy
 		writeSyncError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, sync.MediumView{PublicMedium: *pub, State: *st})
+	writeJSON(w, http.StatusCreated, diarysync.MediumView{PublicMedium: *pub, State: *st})
 }
 
 func (h *Handler) updateMedia(w http.ResponseWriter, r *http.Request, fs *filesystem.Service, id string) {
@@ -170,9 +178,9 @@ func (h *Handler) updateMedia(w http.ResponseWriter, r *http.Request, fs *filesy
 	if !ok {
 		return
 	}
-	pub, err := h.cfg.Sync.Upsert(r.Context(), fs, sync.UpsertIn{
+	pub, err := h.cfg.Sync.Upsert(r.Context(), fs, diarysync.UpsertIn{
 		ID:         id,
-		Kind:       sync.Kind(strings.TrimSpace(body.Kind)),
+		Kind:       diarysync.Kind(strings.TrimSpace(body.Kind)),
 		Name:       body.Name,
 		Enabled:    body.Enabled,
 		Settings:   body.Settings,
@@ -187,7 +195,7 @@ func (h *Handler) updateMedia(w http.ResponseWriter, r *http.Request, fs *filesy
 		writeSyncError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, sync.MediumView{PublicMedium: *pub, State: *st})
+	writeJSON(w, http.StatusOK, diarysync.MediumView{PublicMedium: *pub, State: *st})
 }
 
 func (h *Handler) deleteMedia(w http.ResponseWriter, r *http.Request, fs *filesystem.Service, id string) {
@@ -210,7 +218,7 @@ func (h *Handler) getState(w http.ResponseWriter, r *http.Request, fs *filesyste
 func (h *Handler) triggerSync(w http.ResponseWriter, r *http.Request, fs *filesystem.Service, id string) {
 	st, err := h.cfg.Sync.Trigger(r.Context(), fs, id)
 	if err != nil {
-		if st != nil && (errors.Is(err, sync.ErrEngineNotConfigured) || errors.Is(err, sync.ErrMediumDisabled)) {
+		if st != nil && (errors.Is(err, diarysync.ErrEngineNotConfigured) || errors.Is(err, diarysync.ErrMediumDisabled) || errors.As(err, new(*diarysync.VerifyError))) {
 			writeJSON(w, statusFor(err), map[string]any{
 				"error": map[string]string{
 					"code":    codeFor(err),
@@ -220,12 +228,16 @@ func (h *Handler) triggerSync(w http.ResponseWriter, r *http.Request, fs *filesy
 			})
 			return
 		}
-		if st != nil && !errors.Is(err, sync.ErrNotFound) {
+		if st != nil && !errors.Is(err, diarysync.ErrNotFound) {
+			payload := map[string]string{
+				"code":    "sync_failed",
+				"message": err.Error(),
+			}
+			if hint := diarysync.Hint(err); hint != "" {
+				payload["hint"] = hint
+			}
 			writeJSON(w, http.StatusBadGateway, map[string]any{
-				"error": map[string]string{
-					"code":    "sync_failed",
-					"message": err.Error(),
-				},
+				"error": payload,
 				"state": st,
 			})
 			return
@@ -237,6 +249,10 @@ func (h *Handler) triggerSync(w http.ResponseWriter, r *http.Request, fs *filesy
 }
 
 func decodeMediaBody(w http.ResponseWriter, r *http.Request) (mediaBody, bool) {
+	return decodeMediaBodyMaybeEmpty(w, r, false)
+}
+
+func decodeMediaBodyMaybeEmpty(w http.ResponseWriter, r *http.Request, allowEmpty bool) (mediaBody, bool) {
 	defer r.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -244,6 +260,9 @@ func decodeMediaBody(w http.ResponseWriter, r *http.Request) (mediaBody, bool) {
 		return mediaBody{}, false
 	}
 	if len(strings.TrimSpace(string(raw))) == 0 {
+		if allowEmpty {
+			return mediaBody{}, true
+		}
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body is required")
 		return mediaBody{}, false
 	}
@@ -261,23 +280,27 @@ func writeSyncError(w http.ResponseWriter, err error) {
 
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, sync.ErrNotFound):
+	case errors.Is(err, diarysync.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, sync.ErrUnknownKind),
-		errors.Is(err, sync.ErrMediumNameRequired),
-		errors.Is(err, sync.ErrMediumKindRequired),
-		errors.Is(err, sync.ErrMediumIDRequired),
-		errors.Is(err, sync.ErrSecretKey),
-		errors.Is(err, sync.ErrInvalidCiphertext):
+	case errors.Is(err, diarysync.ErrUnknownKind),
+		errors.Is(err, diarysync.ErrMediumNameRequired),
+		errors.Is(err, diarysync.ErrMediumKindRequired),
+		errors.Is(err, diarysync.ErrMediumIDRequired),
+		errors.Is(err, diarysync.ErrSecretKey),
+		errors.Is(err, diarysync.ErrInvalidCiphertext),
+		errors.Is(err, diarysync.ErrGitHubRepoRequired),
+		errors.Is(err, diarysync.ErrGitHubCredential),
+		errors.Is(err, diarysync.ErrGitHubSettings),
+		errors.As(err, new(*diarysync.VerifyError)):
 		return http.StatusBadRequest
-	case errors.Is(err, sync.ErrNoEncryptionKey),
-		errors.Is(err, sync.ErrInvalidKey),
-		errors.Is(err, sync.ErrEngineNotConfigured):
+	case errors.Is(err, diarysync.ErrNoEncryptionKey),
+		errors.Is(err, diarysync.ErrInvalidKey),
+		errors.Is(err, diarysync.ErrEngineNotConfigured):
 		return http.StatusServiceUnavailable
-	case errors.Is(err, sync.ErrMediumDisabled),
+	case errors.Is(err, diarysync.ErrMediumDisabled),
 		errors.Is(err, filesystem.ErrReadOnly):
 		return http.StatusConflict
-	case errors.Is(err, sync.ErrAttachmentNotSupported):
+	case errors.Is(err, diarysync.ErrAttachmentNotSupported):
 		return http.StatusNotImplemented
 	default:
 		return http.StatusInternalServerError
@@ -286,21 +309,25 @@ func statusFor(err error) int {
 
 func codeFor(err error) string {
 	switch {
-	case errors.Is(err, sync.ErrNotFound):
+	case errors.Is(err, diarysync.ErrNotFound):
 		return "not_found"
-	case errors.Is(err, sync.ErrUnknownKind):
+	case errors.Is(err, diarysync.ErrUnknownKind):
 		return "unknown_kind"
-	case errors.Is(err, sync.ErrMediumNameRequired),
-		errors.Is(err, sync.ErrMediumKindRequired),
-		errors.Is(err, sync.ErrMediumIDRequired),
-		errors.Is(err, sync.ErrSecretKey):
+	case errors.Is(err, diarysync.ErrMediumNameRequired),
+		errors.Is(err, diarysync.ErrMediumKindRequired),
+		errors.Is(err, diarysync.ErrMediumIDRequired),
+		errors.Is(err, diarysync.ErrSecretKey),
+		errors.Is(err, diarysync.ErrGitHubRepoRequired),
+		errors.Is(err, diarysync.ErrGitHubCredential),
+		errors.Is(err, diarysync.ErrGitHubSettings),
+		errors.As(err, new(*diarysync.VerifyError)):
 		return "invalid_request"
-	case errors.Is(err, sync.ErrNoEncryptionKey),
-		errors.Is(err, sync.ErrInvalidKey):
+	case errors.Is(err, diarysync.ErrNoEncryptionKey),
+		errors.Is(err, diarysync.ErrInvalidKey):
 		return "encryption_unavailable"
-	case errors.Is(err, sync.ErrEngineNotConfigured):
+	case errors.Is(err, diarysync.ErrEngineNotConfigured):
 		return "engine_unavailable"
-	case errors.Is(err, sync.ErrMediumDisabled):
+	case errors.Is(err, diarysync.ErrMediumDisabled):
 		return "medium_disabled"
 	case errors.Is(err, filesystem.ErrReadOnly):
 		return "read_only"

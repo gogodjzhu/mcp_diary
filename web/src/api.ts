@@ -43,12 +43,20 @@ export interface MediumInput {
   credential?: string
 }
 
+export interface DiarySettings {
+  lunar_enabled: boolean
+  weather_enabled: boolean
+  weather_location?: string
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
     readonly code?: string,
     readonly state?: SyncState,
+    readonly hint?: string,
+    readonly detail?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -56,9 +64,52 @@ export class ApiError extends Error {
 }
 
 type ErrorBody = {
-  error?: { message?: string; code?: string }
+  error?: { message?: string; code?: string; hint?: string; detail?: string }
   error_description?: string
   state?: SyncState
+}
+
+const codeMessages: Record<string, string> = {
+  invalid_request: '请求无效，请检查填写内容',
+  not_found: '找不到对应的存储介质',
+  unknown_kind: '不支持的存储类型',
+  sync_failed: '同步失败',
+  medium_disabled: '存储介质已停用',
+  engine_unavailable: '同步服务未就绪，请稍后重试',
+  encryption_unavailable: '无法保存凭证：服务端未配置加密密钥',
+  read_only: '当前工作区只读，无法保存',
+  internal_error: '服务内部错误，请稍后重试',
+}
+
+const githubDetailPattern = /^(.*?)（(github api [\s\S]*)）$/
+
+export function splitGitHubDetail(message?: string): { summary: string; detail: string } {
+  if (!message) {
+    return { summary: '', detail: '' }
+  }
+  const split = message.match(githubDetailPattern)
+  if (!split) {
+    return { summary: message, detail: '' }
+  }
+  return { summary: split[1].trim(), detail: split[2].trim() }
+}
+
+export function friendlyError(err: unknown): { summary: string; detail: string } {
+  if (!(err instanceof ApiError)) {
+    const text = err instanceof Error ? err.message : String(err)
+    return { summary: text, detail: '' }
+  }
+  const split = splitGitHubDetail(err.message)
+  const summary = split.summary
+  const detail = err.detail || split.detail
+  const mapped = err.code ? codeMessages[err.code] : ''
+  const hint = err.hint && err.hint !== summary ? err.hint : ''
+  const friendly =
+    err.code === 'sync_failed' || err.code === 'invalid_request' ? summary : mapped || summary
+  return {
+    summary: hint ? `${friendly} ${hint}` : friendly,
+    detail,
+  }
 }
 
 async function parseResponse<T>(resp: Response): Promise<T> {
@@ -66,7 +117,14 @@ async function parseResponse<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     const message =
       data?.error?.message ?? data?.error_description ?? resp.statusText
-    throw new ApiError(resp.status, message, data?.error?.code, data?.state)
+    throw new ApiError(
+      resp.status,
+      message,
+      data?.error?.code,
+      data?.state,
+      data?.error?.hint,
+      data?.error?.detail,
+    )
   }
   return data as T
 }
@@ -117,3 +175,9 @@ export const deleteMedium = (token: string, id: string): Promise<void> =>
 
 export const triggerSync = (token: string, id: string): Promise<SyncState> =>
   apiSend<SyncState>(token, 'POST', `/api/sync/media/${id}/sync`)
+
+export const getSettings = (token: string): Promise<DiarySettings> =>
+  apiGet<DiarySettings>(token, '/api/settings')
+
+export const updateSettings = (token: string, input: DiarySettings): Promise<DiarySettings> =>
+  apiSend<DiarySettings>(token, 'PUT', '/api/settings', input)
