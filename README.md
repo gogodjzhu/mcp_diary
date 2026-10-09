@@ -161,6 +161,11 @@ MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿�
 
 日记数据以 JSON 形式持久化在每个工作区的 `.mcp-diary/diary.json`，写入走沙箱文件服务的原子替换，用户之间完全隔离。
 
+### MCP Apps UI
+
+只读工具 `listDiaryEntries`、`getDiaryEntry`、`getDiarySession` 通过 `_meta.ui.resourceUri` 关联资源 `ui://diary/widget`（MIME `text/html;profile=mcp-app`）。支持 [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) 的宿主（ChatGPT、Claude、VS Code 等）会把结构化结果渲染成条目卡片；不支持 UI 的客户端仍使用原来的 JSON 文本，行为不变。Widget 全部内联，不发网络请求。
+
+
 ## 同步到 GitHub
 
 提交日记后，服务会把每个月的正式日记导出成一个 Markdown 文件并推送（区间由存储介质配置的 owner/repo/branch 决定）：

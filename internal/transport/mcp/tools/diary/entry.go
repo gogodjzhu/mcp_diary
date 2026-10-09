@@ -11,13 +11,13 @@ import (
 func newGetDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "getDiaryEntry",
-		definition: mcp.NewTool(
+		definition: withWidget(mcp.NewTool(
 			"getDiaryEntry",
 			mcp.WithDescription("Read a committed diary entry by entry_id."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithString("request_id", mcp.Required(), mcp.Description("Caller-generated idempotency key.")),
 			mcp.WithString("entry_id", mcp.Required(), mcp.Description("Committed entry id.")),
-		),
+		)),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
 			fs, err := workspaceFS(ctx, workspaces)
 			if err != nil {
@@ -87,7 +87,7 @@ func newUpdateDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Serv
 func newListDiaryEntries(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "listDiaryEntries",
-		definition: mcp.NewTool(
+		definition: withWidget(mcp.NewTool(
 			"listDiaryEntries",
 			mcp.WithDescription("List committed diary entries by business date range with pagination. Does not include drafts."),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -96,7 +96,7 @@ func newListDiaryEntries(workspaces tools.WorkspaceProvider, svc *corediary.Serv
 			mcp.WithString("diary_date_to", mcp.Description("Inclusive end date YYYY-MM-DD.")),
 			mcp.WithInteger("page", mcp.Description("1-based page number. Defaults to 1.")),
 			mcp.WithInteger("page_size", mcp.Description("Page size. Defaults to 20, max 100.")),
-		),
+		)),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
 			fs, err := workspaceFS(ctx, workspaces)
 			if err != nil {

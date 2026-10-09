@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mcp-diary</title>
+  <style>
+    :root {
+      --color-background-primary: light-dark(#f7f5f0, #171717);
+      --color-background-secondary: light-dark(#ffffff, #262626);
+      --color-text-primary: light-dark(#171717, #fafafa);
+      --color-text-secondary: light-dark(#57534e, #a8a29e);
+      --color-border-primary: light-dark(#e7e5e4, #404040);
+      --color-text-danger: light-dark(#b91c1c, #fca5a5);
+      --font-sans: ui-sans-serif, system-ui, sans-serif;
+      --border-radius-md: 12px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--color-background-primary);
+      color: var(--color-text-primary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    body { padding: 12px; }
+    .status {
+      color: var(--color-text-secondary);
+      padding: 8px 4px;
+    }
+    .error { color: var(--color-text-danger); }
+    .card {
+      background: var(--color-background-secondary);
+      border: 1px solid var(--color-border-primary);
+      border-radius: var(--border-radius-md);
+      padding: 12px 14px;
+      margin: 0 0 10px;
+    }
+    .date {
+      font-weight: 650;
+      font-size: 15px;
+    }
+    .meta {
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .content {
+      white-space: pre-wrap;
+      margin-top: 8px;
+      word-break: break-word;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 1px 7px;
+      border: 1px solid var(--color-border-primary);
+      border-radius: 999px;
+      color: var(--color-text-secondary);
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .footer {
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      padding: 4px 2px 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="root" class="status">正在连接宿主…</div>
+  <script>
+    (function () {
+      var root = document.getElementById("root");
+      var parentWin = window.parent;
+      var nextId = 1;
+      var pending = {};
+
+      function esc(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function show(html) {
+        root.innerHTML = html;
+        notifySize();
+      }
+
+      function showStatus(text, isError) {
+        root.className = isError ? "status error" : "status";
+        root.textContent = text;
+        notifySize();
+      }
+
+      function notifySize() {
+        var h = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+        parentWin.postMessage({
+          jsonrpc: "2.0",
+          method: "ui/notifications/size-changed",
+          params: { width: document.documentElement.clientWidth, height: h }
+        }, "*");
+      }
+
+      function sendRequest(method, params) {
+        var id = nextId++;
+        parentWin.postMessage({ jsonrpc: "2.0", id: id, method: method, params: params }, "*");
+        return new Promise(function (resolve, reject) {
+          pending[id] = { resolve: resolve, reject: reject };
+        });
+      }
+
+      function applyTheme(ctx) {
+        if (!ctx) return;
+        if (ctx.theme) document.documentElement.setAttribute("data-theme", ctx.theme);
+        var vars = ctx.styles && ctx.styles.variables;
+        if (vars) {
+          var keys = Object.keys(vars);
+          for (var i = 0; i < keys.length; i++) {
+            if (vars[keys[i]]) document.documentElement.style.setProperty(keys[i], vars[keys[i]]);
+          }
+        }
+      }
+
+      function preview(text, max) {
+        var t = String(text || "").replace(/\s+/g, " ").trim();
+        if (t.length <= max) return t;
+        return t.slice(0, max) + "…";
+      }
+
+      function metaLine(meta) {
+        if (!meta) return "";
+        var parts = [];
+        if (meta.lunar) parts.push(esc(meta.lunar));
+        if (meta.weekday) parts.push("周" + esc(meta.weekday));
+        if (meta.weather) parts.push(esc(meta.weather));
+        if (meta.location) parts.push(esc(meta.location));
+        return parts.length ? '<div class="meta">' + parts.join(" · ") + "</div>" : "";
+      }
+
+      function renderEntry(item, full) {
+        var date = esc(item.diary_date || "未指定日期");
+        var badge = item.status ? '<span class="badge">' + esc(item.status) + "</span>" : "";
+        var body = full ? String(item.content || "") : preview(item.content, 180);
+        return '<article class="card"><div class="date">' + date + badge + "</div>" +
+          metaLine(item.meta) +
+          '<div class="content">' + esc(body) + "</div></article>";
+      }
+
+      function renderStructured(sc) {
+        if (!sc || typeof sc !== "object") {
+          showStatus("没有可渲染的结构化内容", true);
+          return;
+        }
+        if (typeof sc.code === "number" && sc.code !== 0) {
+          showStatus((sc.message || "工具返回错误") + " (" + sc.code + ")", true);
+          return;
+        }
+        var data = sc.data != null ? sc.data : sc;
+        if (data && Array.isArray(data.entries)) {
+          if (!data.entries.length) {
+            showStatus("这段日期范围内还没有正式日记。");
+            return;
+          }
+          var cards = data.entries.map(function (e) { return renderEntry(e, false); }).join("");
+          var total = data.total != null ? data.total : data.entries.length;
+          var footer = '<div class="footer">共 ' + esc(total) + " 篇";
+          if (data.page) footer += " · 第 " + esc(data.page) + " 页";
+          footer += "</div>";
+          root.className = "";
+          show(cards + footer);
+          return;
+        }
+        if (data && data.entry_id) {
+          root.className = "";
+          show(renderEntry(data, true));
+          return;
+        }
+        if (data && data.session_id) {
+          root.className = "";
+          show(renderEntry({
+            diary_date: data.diary_date,
+            content: data.content,
+            status: data.status || "draft",
+            meta: data.meta
+          }, true));
+          return;
+        }
+        showStatus("已收到工具结果，但无法识别日记结构。", true);
+      }
+
+      function renderResult(result) {
+        if (!result) {
+          showStatus("空的工具结果", true);
+          return;
+        }
+        if (result.isError) {
+          var text = "";
+          if (Array.isArray(result.content)) {
+            for (var i = 0; i < result.content.length; i++) {
+              if (result.content[i] && result.content[i].text) text += result.content[i].text;
+            }
+          }
+          showStatus(text || "工具调用失败", true);
+          return;
+        }
+        renderStructured(result.structuredContent);
+      }
+
+      window.addEventListener("message", function (event) {
+        var msg = event.data;
+        if (!msg || msg.jsonrpc !== "2.0") return;
+        if (msg.id != null && pending[msg.id]) {
+          var p = pending[msg.id];
+          delete pending[msg.id];
+          if (msg.error) p.reject(msg.error);
+          else p.resolve(msg.result);
+          return;
+        }
+        if (msg.method === "ui/notifications/tool-result") renderResult(msg.params);
+        else if (msg.method === "ui/notifications/tool-cancelled") showStatus("工具调用已取消");
+        else if (msg.method === "ui/notifications/host-context-changed") applyTheme(msg.params);
+      });
+
+      if (typeof ResizeObserver !== "undefined") {
+        new ResizeObserver(notifySize).observe(document.body);
+      }
+
+      sendRequest("ui/initialize", {
+        protocolVersion: "2026-01-26",
+        appCapabilities: { availableDisplayModes: ["inline"] },
+        clientInfo: { name: "mcp-diary-widget", version: "1.0.0" }
+      }).then(function (res) {
+        if (res && res.hostContext) applyTheme(res.hostContext);
+        parentWin.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+        showStatus("等待日记数据…");
+      }).catch(function (err) {
+        var m = err && (err.message || err.data) ? (err.message || JSON.stringify(err.data)) : "初始化失败";
+        showStatus(m, true);
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -12,6 +12,7 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/widget"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -41,10 +42,12 @@ func New(cfg config.Config, workspaces *workspace.Manager, registry *tools.Regis
 		server.WithTitle(cfg.Name),
 		server.WithInstructions(instructions(workspaces)),
 		server.WithToolCapabilities(true),
+		server.WithResourceCapabilities(false, false),
 		server.WithRecovery(),
 		server.WithLogging(),
 	)
 	registry.Bind(s.mcp)
+	s.mcp.AddResource(widget.Resource(), widget.Read)
 
 	return s
 }

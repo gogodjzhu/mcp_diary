@@ -85,13 +85,13 @@ func newAppendDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Se
 func newGetDiarySession(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
 	return diaryTool{
 		name: "getDiarySession",
-		definition: mcp.NewTool(
+		definition: withWidget(mcp.NewTool(
 			"getDiarySession",
 			mcp.WithDescription("Read a diary draft by session_id so the Agent can continue after context loss."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithString("request_id", mcp.Required(), mcp.Description("Caller-generated idempotency key.")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description("Draft session id.")),
-		),
+		)),
 		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
 			fs, err := workspaceFS(ctx, workspaces)
 			if err != nil {
