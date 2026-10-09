@@ -121,6 +121,28 @@ func TestMergeMonthNoChangeReturnsRemote(t *testing.T) {
 	}
 }
 
+func TestMergeMonthUnmanagedAdjacentDaysStayStable(t *testing.T) {
+	remote := []byte(
+		daySeparator + "\n\n2026-10-03，六\n\nthird\n\n" +
+			daySeparator + "\n\n2026-10-02，五\n\nsecond\n\n" +
+			daySeparator + "\n\n2026-10-01，四\n\nfirst\n",
+	)
+	first, changed := MergeMonth(remote, nil, "2026-10", nil)
+	if changed {
+		t.Fatalf("canonical unmanaged days should not change on first merge, got:\n%s", first)
+	}
+	if string(first) != string(remote) {
+		t.Fatalf("first merge bytes differ from remote:\n%s", first)
+	}
+	second, changed := MergeMonth(first, nil, "2026-10", nil)
+	if changed {
+		t.Fatal("second merge must report changed=false")
+	}
+	if string(second) != string(first) {
+		t.Fatalf("second merge bytes differ:\n%s", second)
+	}
+}
+
 func TestMergeMonthParsesLegacyHeading(t *testing.T) {
 	remote := []byte("# 2026-10\n\n## 2026-10-01\n\nlegacy day\n")
 	entries := []diary.Entry{

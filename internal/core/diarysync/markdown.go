@@ -245,7 +245,7 @@ func MergeMonth(remote []byte, entries []diary.Entry, month string, managed []st
 			// Managed but no longer local: drop it.
 			continue
 		}
-		out = append(out, b.raw)
+		out = append(out, strings.TrimRight(b.raw, "\n")+"\n")
 	}
 	for _, e := range local {
 		if _, ok := remoteDates[e.DiaryDate]; ok {
