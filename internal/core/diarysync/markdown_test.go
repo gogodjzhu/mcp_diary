@@ -121,6 +121,34 @@ func TestMergeMonthNoChangeReturnsRemote(t *testing.T) {
 	}
 }
 
+func TestMergeMonthPreservesRemotePreamble(t *testing.T) {
+	remote := []byte("# keep me\n\n" +
+		daySeparator + "\n\n2026-10-01，四\n\ncontent\n")
+	first, changed := MergeMonth(remote, nil, "2026-10", nil)
+	if !strings.HasPrefix(string(first), "# keep me\n\n") {
+		t.Fatalf("preamble lost on first merge:\n%s", first)
+	}
+	if strings.Count(string(first), "# keep me") != 1 {
+		t.Fatalf("preamble duplicated on first merge:\n%s", first)
+	}
+	if changed {
+		t.Fatalf("canonical preamble+day should not change on first merge, got:\n%s", first)
+	}
+	if string(first) != string(remote) {
+		t.Fatalf("first merge bytes differ from remote:\n%s", first)
+	}
+	second, changed := MergeMonth(first, nil, "2026-10", nil)
+	if changed {
+		t.Fatal("second merge must report changed=false")
+	}
+	if string(second) != string(first) {
+		t.Fatalf("second merge bytes differ:\n%s", second)
+	}
+	if strings.Count(string(second), "# keep me") != 1 {
+		t.Fatalf("preamble duplicated on second merge:\n%s", second)
+	}
+}
+
 func TestMergeMonthUnmanagedAdjacentDaysStayStable(t *testing.T) {
 	remote := []byte(
 		daySeparator + "\n\n2026-10-03，六\n\nthird\n\n" +
