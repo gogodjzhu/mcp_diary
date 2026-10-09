@@ -13,6 +13,7 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/logging"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/widget"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -102,6 +103,60 @@ func TestStreamableHTTPEndToEnd(t *testing.T) {
 		if names[gone] {
 			t.Fatalf("filesystem tool %q should have been removed; got %v", gone, names)
 		}
+	}
+
+	for _, tool := range tools.Tools {
+		switch tool.Name {
+		case "listDiaryEntries", "getDiaryEntry", "getDiarySession":
+			if tool.Meta == nil || tool.Meta.AdditionalFields["ui"] == nil {
+				t.Fatalf("%s missing _meta.ui", tool.Name)
+			}
+			ui, _ := tool.Meta.AdditionalFields["ui"].(map[string]any)
+			if ui["resourceUri"] != widget.URI {
+				t.Fatalf("%s resourceUri = %v, want %s", tool.Name, ui["resourceUri"], widget.URI)
+			}
+		case "createDiarySession":
+			if tool.Meta != nil {
+				t.Fatalf("write tool %s should not advertise a UI resource", tool.Name)
+			}
+		}
+	}
+
+	resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
+	if err != nil {
+		t.Fatalf("ListResources: %v", err)
+	}
+	found := false
+	for _, r := range resources.Resources {
+		if r.URI == widget.URI {
+			found = true
+			if r.MIMEType != widget.MIMEType {
+				t.Fatalf("widget MIMEType = %q, want %q", r.MIMEType, widget.MIMEType)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("ui resource %s not listed; got %#v", widget.URI, resources.Resources)
+	}
+
+	readReq := mcp.ReadResourceRequest{}
+	readReq.Params.URI = widget.URI
+	contents, err := c.ReadResource(ctx, readReq)
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if len(contents.Contents) != 1 {
+		t.Fatalf("resource contents = %d, want 1", len(contents.Contents))
+	}
+	text, ok := contents.Contents[0].(mcp.TextResourceContents)
+	if !ok {
+		t.Fatalf("contents[0] is %T", contents.Contents[0])
+	}
+	if text.MIMEType != widget.MIMEType {
+		t.Fatalf("read MIMEType = %q", text.MIMEType)
+	}
+	if text.Text != widget.HTML {
+		t.Fatal("read HTML does not match embedded widget")
 	}
 }
 

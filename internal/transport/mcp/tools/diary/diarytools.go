@@ -7,6 +7,7 @@ import (
 	corediary "github.com/gogodjzhu/mcp-diary/internal/core/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/widget"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -102,4 +103,9 @@ func mapWorkspaceErr(err error) error {
 		return &corediary.Error{Code: 401, Message: "unauthenticated"}
 	}
 	return err
+}
+
+func withWidget(t mcp.Tool) mcp.Tool {
+	t.Meta = widget.ToolMeta()
+	return t
 }
