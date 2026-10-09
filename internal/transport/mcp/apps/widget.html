@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mcp-diary</title>
+  <style>
+    :root {
+      --color-background-primary: light-dark(#f7f4ef, #171717);
+      --color-background-secondary: light-dark(#fff, #222);
+      --color-text-primary: light-dark(#1c1917, #fafafa);
+      --color-text-secondary: light-dark(#57534e, #a8a29e);
+      --color-border-primary: light-dark(#e7e5e4, #3f3f46);
+      --color-text-info: light-dark(#0f766e, #5eead4);
+      --font-sans: ui-sans-serif, system-ui, sans-serif;
+      --border-radius-md: 10px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--color-background-primary);
+      color: var(--color-text-primary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    body { padding: 12px; }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .muted { color: var(--color-text-secondary); }
+    .err { color: #b91c1c; padding: 8px 0; }
+    .card {
+      background: var(--color-background-secondary);
+      border: 1px solid var(--color-border-primary);
+      border-radius: var(--border-radius-md);
+      padding: 10px 12px;
+      margin: 0 0 8px;
+    }
+    .date { font-weight: 600; }
+    .meta { font-size: 12px; color: var(--color-text-info); margin-left: 6px; }
+    .summary {
+      margin: 6px 0 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--color-border-primary);
+      color: var(--color-text-secondary);
+      margin-left: 6px;
+    }
+    .empty { padding: 16px 4px; }
+  </style>
+</head>
+<body>
+  <h1>日记</h1>
+  <div id="root" class="muted">等待宿主推送工具结果…</div>
+  <script>
+    (function () {
+      const root = document.getElementById("root");
+      let nextId = 1;
+      const pending = new Map();
+
+      function post(msg) {
+        window.parent.postMessage(msg, "*");
+      }
+
+      function sendRequest(method, params) {
+        const id = nextId++;
+        post({ jsonrpc: "2.0", id: id, method: method, params: params });
+        return new Promise(function (resolve, reject) {
+          pending.set(id, { resolve: resolve, reject: reject });
+        });
+      }
+
+      function sendNotification(method, params) {
+        post({ jsonrpc: "2.0", method: method, params: params });
+      }
+
+      function applyTheme(theme) {
+        if (theme === "dark" || theme === "light") {
+          document.documentElement.style.colorScheme = theme;
+        }
+      }
+
+      function applyVars(vars) {
+        if (!vars) return;
+        const s = document.documentElement.style;
+        Object.keys(vars).forEach(function (k) {
+          if (vars[k] != null) s.setProperty(k, String(vars[k]));
+        });
+      }
+
+      function summary(text) {
+        const t = String(text || "").replace(/\s+/g, " ").trim();
+        if (!t) return "（无正文）";
+        return t.length > 160 ? t.slice(0, 160) + "…" : t;
+      }
+
+      function metaBits(meta) {
+        if (!meta || typeof meta !== "object") return "";
+        const bits = [meta.weekday, meta.lunar, meta.weather, meta.location].filter(Boolean);
+        return bits.length ? '<span class="meta">' + bits.join(" · ") + "</span>" : "";
+      }
+
+      function card(item, kind) {
+        const date = item.diary_date || "未知日期";
+        const status = item.status && item.status !== "committed"
+          ? '<span class="badge">' + item.status + "</span>"
+          : "";
+        return (
+          '<article class="card">' +
+            '<div><span class="date">' + date + "</span>" + metaBits(item.meta) + status + "</div>" +
+            '<div class="summary">' + summary(item.content) + "</div>" +
+            '<div class="muted" style="font-size:12px;margin-top:6px">' + (kind || "") + "</div>" +
+          "</article>"
+        );
+      }
+
+      function render(result) {
+        if (!result) {
+          root.innerHTML = '<div class="empty muted">没有可渲染的结果。</div>';
+          return;
+        }
+        const sc = result.structuredContent;
+        if (!sc || typeof sc !== "object") {
+          const texts = (result.content || []).map(function (c) { return c && c.text; }).filter(Boolean);
+          root.innerHTML = texts.length
+            ? '<div class="card"><div class="summary">' + summary(texts.join("\n")) + "</div></div>"
+            : '<div class="empty muted">工具未返回结构化内容。</div>';
+          return;
+        }
+        if (sc.code && sc.code !== 0) {
+          root.innerHTML = '<div class="err">' + (sc.message || "工具调用失败") + "</div>";
+          return;
+        }
+        const data = sc.data;
+        if (!data) {
+          root.innerHTML = '<div class="empty muted">没有日记数据。</div>';
+          return;
+        }
+        if (Array.isArray(data.entries)) {
+          if (!data.entries.length) {
+            root.innerHTML = '<div class="empty muted">这个日期范围内没有日记。</div>';
+            return;
+          }
+          const total = data.total != null ? "共 " + data.total + " 篇" : data.entries.length + " 篇";
+          root.innerHTML = '<div class="muted" style="margin-bottom:8px">' + total + "</div>" +
+            data.entries.map(function (e) { return card(e, ""); }).join("");
+          return;
+        }
+        if (data.entry_id) {
+          root.innerHTML = card(data, "entry " + data.entry_id);
+          return;
+        }
+        if (data.session_id) {
+          root.innerHTML = card(data, "draft " + data.session_id);
+          return;
+        }
+        root.innerHTML = '<div class="card"><div class="summary">' + summary(JSON.stringify(data)) + "</div></div>";
+      }
+
+      window.addEventListener("message", function (event) {
+        const msg = event.data;
+        if (!msg || typeof msg !== "object") return;
+        if (msg.id != null && pending.has(msg.id)) {
+          const p = pending.get(msg.id);
+          pending.delete(msg.id);
+          if (msg.error) p.reject(msg.error);
+          else p.resolve(msg.result);
+          return;
+        }
+        if (msg.method === "ui/notifications/tool-result") {
+          render(msg.params);
+          return;
+        }
+        if (msg.method === "ui/notifications/host-context-changed" && msg.params) {
+          if (msg.params.theme) applyTheme(msg.params.theme);
+          if (msg.params.styles && msg.params.styles.variables) applyVars(msg.params.styles.variables);
+        }
+      });
+
+      function reportSize() {
+        sendNotification("ui/notifications/size-changed", {
+          width: document.documentElement.scrollWidth,
+          height: document.documentElement.scrollHeight
+        });
+      }
+      if (typeof ResizeObserver !== "undefined") {
+        new ResizeObserver(reportSize).observe(document.documentElement);
+      }
+
+      sendRequest("ui/initialize", {
+        protocolVersion: "2026-01-26",
+        appInfo: { name: "mcp-diary-widget", version: "1.0.0" },
+        appCapabilities: { availableDisplayModes: ["inline"] }
+      }).then(function (result) {
+        const ctx = result && result.hostContext;
+        if (ctx) {
+          if (ctx.theme) applyTheme(ctx.theme);
+          if (ctx.styles && ctx.styles.variables) applyVars(ctx.styles.variables);
+        }
+        sendNotification("ui/notifications/initialized", {});
+      }).catch(function () {
+        sendNotification("ui/notifications/initialized", {});
+      });
+    })();
+  </script>
+</body>
+</html>

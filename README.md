@@ -18,6 +18,7 @@
 - **封装的沙箱存储**：日记数据通过沙箱化文件服务落盘（原子写入、路径校验、防 `../` 与符号链接逃逸），不直接对外暴露文件接口。
 - **只读模式**：一键禁用所有写操作，适合只读检索场景。
 - **结构化输出**：每个工具同时返回结构化内容与可读的 JSON 文本。
+- **MCP Apps UI**：只读日记工具通过 SEP-1865 关联一个自包含 HTML widget（`ui://diary/widget`），支持 MCP Apps 的宿主会内联渲染条目列表；不支持的客户端仍只看到原来的文本结果。
 - **可扩展架构**：新增工具只需实现 `tools.Tool` 接口并注册即可。
 - **优雅退出**：监听 `SIGINT` / `SIGTERM`，HTTP 服务平滑关闭。
 
@@ -35,6 +36,7 @@ internal/
     oauth/                    OAuth 2.1 授权服务器（Google 联邦、动态注册、文件存储）
   transport/                  接入层：所有对外协议与 UI
     mcp/                      MCP Server 组装与 Streamable HTTP 传输
+      apps/                   MCP Apps widget（go:embed 的单文件 HTML）
       tools/                  Tool 接口 + 注册表 + 结果辅助函数
         diary/                日记 MCP 工具
     httpapi/                  REST API（/api/*），复用同一套 OAuth 校验
@@ -161,6 +163,8 @@ MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿�
 
 日记数据以 JSON 形式持久化在每个工作区的 `.mcp-diary/diary.json`，写入走沙箱文件服务的原子替换，用户之间完全隔离。
 
+`listDiaryEntries`、`getDiaryEntry`、`getDiarySession` 在工具定义上带 `_meta.ui.resourceUri = ui://diary/widget`。支持 [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) 的宿主会读取该资源（`text/html;profile=mcp-app`）并在沙箱 iframe 里渲染日期 + 摘要；widget 全部内联、不发网络请求。不支持 UI 的客户端忽略 `_meta`，继续使用原来的 JSON 文本。
+
 ## 同步到 GitHub
 
 提交日记后，服务会把每个月的正式日记导出成一个 Markdown 文件并推送（区间由存储介质配置的 owner/repo/branch 决定）：
@@ -229,6 +233,22 @@ MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿�
 ```bash
 ./bin/mcp-diary serve --transport stdio --root .
 ```
+
+### MCP Apps widget（ChatGPT / basic-host）
+
+本地验证（无需认证）：
+
+```bash
+./bin/mcp-diary serve --root /tmp/mcp-diary-data --addr :8080
+```
+
+用 [ext-apps basic-host](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-host)：
+
+```bash
+SERVERS='["http://localhost:8080/mcp"]' npm run start
+```
+
+在 host 里调用 `listDiaryEntries`（先用会话工具写几篇日记），应看到内联 widget 列出日期与摘要。ChatGPT Developer Mode 则添加自定义 connector，MCP URL 填公网 `https://<host>/mcp`。
 
 ## CLI 参数
 
