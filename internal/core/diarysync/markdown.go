@@ -201,7 +201,8 @@ func ParseMonth(body []byte) (preamble string, blocks []dayBlock) {
 // The medium only ever replaces or removes day blocks whose dates are listed
 // in managed (the dates it wrote last time). Every other block is treated as
 // pre-existing remote content and preserved byte-for-byte. Local days that do
-// not exist remotely are appended.
+// not exist remotely are appended. Remote preamble (bytes before the first
+// day block) is preserved as-is, is not rewritten, and is emitted once.
 //
 // It returns the merged body plus whether it differs from remote. A nil body
 // with changed=true means nothing remains in the file and it should be
@@ -224,7 +225,7 @@ func MergeMonth(remote []byte, entries []diary.Entry, month string, managed []st
 		}
 	}
 
-	_, blocks := ParseMonth(remote)
+	preamble, blocks := ParseMonth(remote)
 	if len(blocks) == 0 {
 		// The remote file is not in a shape we understand: never destroy it,
 		// just append local days that are not already visible.
@@ -245,7 +246,7 @@ func MergeMonth(remote []byte, entries []diary.Entry, month string, managed []st
 			// Managed but no longer local: drop it.
 			continue
 		}
-		out = append(out, b.raw)
+		out = append(out, strings.TrimRight(b.raw, "\n")+"\n")
 	}
 	for _, e := range local {
 		if _, ok := remoteDates[e.DiaryDate]; ok {
@@ -259,6 +260,9 @@ func MergeMonth(remote []byte, entries []diary.Entry, month string, managed []st
 	merged := []byte(strings.Join(out, "\n"))
 	if !strings.HasSuffix(string(merged), "\n") {
 		merged = append(merged, '\n')
+	}
+	if preamble != "" {
+		merged = append([]byte(preamble), merged...)
 	}
 	if bytes.Equal(merged, remote) {
 		return remote, false
