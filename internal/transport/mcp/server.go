@@ -11,6 +11,7 @@ import (
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/apps"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -44,6 +45,7 @@ func New(cfg config.Config, workspaces *workspace.Manager, registry *tools.Regis
 		server.WithRecovery(),
 		server.WithLogging(),
 	)
+	apps.Register(s.mcp)
 	registry.Bind(s.mcp)
 
 	return s

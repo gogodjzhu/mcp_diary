@@ -13,6 +13,7 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
 	"github.com/gogodjzhu/mcp-diary/internal/platform/logging"
+	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/apps"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -101,6 +102,20 @@ func TestStreamableHTTPEndToEnd(t *testing.T) {
 	for _, gone := range []string{"read_file", "write_file", "append_file", "list_directory", "create_directory", "delete_path", "file_info"} {
 		if names[gone] {
 			t.Fatalf("filesystem tool %q should have been removed; got %v", gone, names)
+		}
+	}
+
+	wantUI := map[string]bool{"listDiaryEntries": true, "getDiaryEntry": true, "getDiarySession": true}
+	for _, tool := range tools.Tools {
+		got := uiResourceURI(tool.Meta)
+		if wantUI[tool.Name] {
+			if got != apps.WidgetURI {
+				t.Fatalf("%s _meta.ui.resourceUri = %q, want %q", tool.Name, got, apps.WidgetURI)
+			}
+			continue
+		}
+		if got != "" {
+			t.Fatalf("%s should not advertise a UI resource, got %q", tool.Name, got)
 		}
 	}
 }
@@ -306,4 +321,91 @@ func TestDiaryMCPEndToEnd(t *testing.T) {
 	if deleted["data"].(map[string]any)["deleted"] != true {
 		t.Fatalf("delete = %v", deleted)
 	}
+}
+
+func TestMCPAppsDiaryWidget(t *testing.T) {
+	cfg := config.Default()
+	cfg.Root = t.TempDir()
+	cfg.Version = "test"
+	cfg.LogLevel = "error"
+
+	logger, err := logging.New(cfg.LogLevel, cfg.LogFormat)
+	if err != nil {
+		t.Fatalf("logging.New: %v", err)
+	}
+	application, err := app.New(cfg, logger)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+
+	ts := httptest.NewServer(application.HTTPHandler())
+	defer ts.Close()
+
+	c, err := client.NewStreamableHttpClient(ts.URL + cfg.EndpointPath)
+	if err != nil {
+		t.Fatalf("NewStreamableHttpClient: %v", err)
+	}
+	defer c.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("client.Start: %v", err)
+	}
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "test-client", Version: "1.0.0"}
+	if _, err := c.Initialize(ctx, initRequest); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	listed, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
+	if err != nil {
+		t.Fatalf("ListResources: %v", err)
+	}
+	found := false
+	for _, r := range listed.Resources {
+		if r.URI != apps.WidgetURI {
+			continue
+		}
+		found = true
+		if r.MIMEType != apps.WidgetMIME {
+			t.Fatalf("resource mime = %q, want %q", r.MIMEType, apps.WidgetMIME)
+		}
+	}
+	if !found {
+		t.Fatalf("resource %s not listed; got %+v", apps.WidgetURI, listed.Resources)
+	}
+
+	readReq := mcp.ReadResourceRequest{}
+	readReq.Params.URI = apps.WidgetURI
+	contents, err := c.ReadResource(ctx, readReq)
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if len(contents.Contents) != 1 {
+		t.Fatalf("contents = %d, want 1", len(contents.Contents))
+	}
+	text, ok := contents.Contents[0].(mcp.TextResourceContents)
+	if !ok {
+		t.Fatalf("content type %T, want TextResourceContents", contents.Contents[0])
+	}
+	if text.MIMEType != apps.WidgetMIME {
+		t.Fatalf("read mime = %q, want %q", text.MIMEType, apps.WidgetMIME)
+	}
+	if !strings.Contains(text.Text, "<!DOCTYPE html>") {
+		t.Fatal("widget HTML is missing a doctype")
+	}
+	if !strings.Contains(text.Text, "ui/notifications/tool-result") {
+		t.Fatal("widget HTML does not listen for tool-result")
+	}
+}
+
+func uiResourceURI(meta *mcp.Meta) string {
+	if meta == nil {
+		return ""
+	}
+	ui, _ := meta.AdditionalFields["ui"].(map[string]any)
+	uri, _ := ui["resourceUri"].(string)
+	return uri
 }
