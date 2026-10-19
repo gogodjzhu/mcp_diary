@@ -94,3 +94,57 @@ func TestMetaIsJSONEncodable(t *testing.T) {
 		t.Error("meta.ui.csp missing")
 	}
 }
+
+// TestEntriesViewHasNoRaceProneReload guards the ChatGPT regression: tool
+// input must only seed the query, and the render must come from onResult or
+// the sequenced onToolResult, never from a request started by onInput.
+func TestEntriesViewHasNoRaceProneReload(t *testing.T) {
+	html := string(mustAsset("assets/entries.html"))
+	if strings.Contains(html, "window.diary.onInput(function (input) {\n          readQuery(input);\n          // Rerun") {
+		t.Fatal("onInput must not start a reload")
+	}
+	for _, want := range []string{
+		"window.diary.onInput(readQuery)",
+		"onToolResult(",
+		"ask-delete",
+		"deleteDiaryEntry",
+		"expected_revision",
+		"updateModelContext(",
+		"B.sequence()",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("entries.html missing %q", want)
+		}
+	}
+	if strings.Contains(html, "expandedIndex") {
+		t.Error("entries.html still contains the pre-refresh render path")
+	}
+}
+
+func TestBridgeExposesToolResultStream(t *testing.T) {
+	js := string(mustAsset("assets/bridge.js"))
+	for _, want := range []string{
+		"onToolResult",
+		"parseResult",
+		"sequence",
+		"updateModelContext",
+		"ui/update-model-context",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("bridge.js missing %q", want)
+		}
+	}
+}
+
+func TestUIOnlyToolsAreDeclared(t *testing.T) {
+	uiOnly := RegistryVisibility()
+	if _, ok := uiOnly["deleteDiaryEntry"]; !ok {
+		t.Fatal("deleteDiaryEntry must be app-only")
+	}
+	// Tools with the UI binding must never be app-only.
+	for name := range ToolMetas() {
+		if _, ok := uiOnly[name]; ok {
+			t.Errorf("%s is both a render tool and app-only", name)
+		}
+	}
+}

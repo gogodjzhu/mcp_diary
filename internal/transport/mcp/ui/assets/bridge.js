@@ -10,7 +10,7 @@
 
   var pending = new Map();
   var nextID = 1;
-  var listeners = { input: [], result: [], size: [] };
+  var listeners = { input: [], result: [], toolResult: [], size: [] };
   var latestInput = null;
   var latestResult = null;
 
@@ -56,6 +56,9 @@
       } else if (message.method === "ui/notifications/tool-result") {
         latestResult = message.params || {};
         emit("result", latestResult);
+        emit("toolResult", latestResult);
+      } else if (message.method === "ui/notifications/tool-cancelled") {
+        emit("toolResult", { cancelled: true, reason: message.params && message.params.reason });
       } else if (message.method === "ui/notifications/host-context-changed") {
         applyHostContext(message.params);
       }
@@ -111,12 +114,22 @@
       listeners.input.push(fn);
       if (latestInput) fn(latestInput);
     },
+    onSize: function (fn) {
+      listeners.size.push(fn);
+    },
+    // onResult is the initial tool result only: the data the model called the
+    // render tool with. Later results (pagination, deletes) arrive through
+    // onToolResult so they never clobber the host's first push.
     onResult: function (fn) {
       listeners.result.push(fn);
       if (latestResult) fn(latestResult);
     },
-    onSize: function (fn) {
-      listeners.size.push(fn);
+    // onToolResult also receives results of tools/call requests made by the
+    // view, and cancellations ({cancelled: true, reason}). Prefer the promise
+    // returned by callTool and treat this as a notification stream.
+    onToolResult: function (fn) {
+      listeners.toolResult.push(fn);
+      if (latestResult) fn(latestResult);
     },
     input: function () {
       return latestInput;
@@ -125,10 +138,36 @@
     // their payload in {code, message, data}; see unwrap.
     callTool: function (name, args) {
       var o = api();
+      var call;
       if (o && typeof o.callTool === "function") {
-        return Promise.resolve(o.callTool({ name: name, arguments: args || {} }));
+        // window.openai.callTool takes a single options object and may return
+        // the unwrapped structuredContent, so only trust it when it does.
+        call = Promise.resolve(o.callTool({ name: name, arguments: args || {} })).then(function (res) {
+          if (res && res.structuredContent !== undefined) return res;
+          if (res && (res.code !== undefined || res.isError)) return { structuredContent: res };
+          return res;
+        });
+      } else {
+        call = request("tools/call", { name: name, arguments: args || {} });
       }
-      return request("tools/call", { name: name, arguments: args || {} });
+      return call.then(function (res) {
+        if (res && !res.cancelled && res.isError) {
+          var err = new Error(errorText(res) || "工具调用失败");
+          err.code = resultCode(res);
+          return Promise.reject(err);
+        }
+        return res;
+      });
+    },
+    // updateModelContext tells the host what changed so the model stays in
+    // sync with the view. Hosts without support resolve to undefined.
+    updateModelContext: function (content, structuredContent) {
+      var params = { content: content || [] };
+      if (structuredContent) params.structuredContent = structuredContent;
+      return request("ui/update-model-context", params).catch(function (err) {
+        console.warn("ui/update-model-context unsupported", err);
+        return null;
+      });
     },
     openLink: function (url) {
       var o = api();
@@ -172,10 +211,81 @@
     var payload = result;
     if (result && result.structuredContent !== undefined) payload = result.structuredContent;
     if (payload && typeof payload === "object" && "code" in payload) {
-      if (payload.code !== 0) return Promise.reject(new Error(payload.message || "request failed"));
+      if (payload.code !== 0) {
+        var err = new Error(payload.message || "request failed");
+        err.code = payload.code;
+        return Promise.reject(err);
+      }
       return Promise.resolve(payload.data);
     }
     return Promise.resolve(payload);
+  }
+
+  // parseResult normalizes the shapes hosts use to deliver a tool result:
+  // the MCP result object, its structuredContent, an OpenAI-style
+  // toolOutput, or a content[] block carrying JSON text.
+  function parseResult(result) {
+    if (result && result.cancelled) return null;
+    var payload = result;
+    if (result && result.structuredContent !== undefined) payload = result.structuredContent;
+    if (
+      payload &&
+      Array.isArray(payload.content) &&
+      (payload.entries === undefined || payload.code === undefined)
+    ) {
+      for (var i = 0; i < payload.content.length; i++) {
+        var block = payload.content[i];
+        if (block && block.type === "text" && typeof block.text === "string") {
+          try {
+            var parsed = JSON.parse(block.text);
+            if (parsed && typeof parsed === "object") return parsed;
+          } catch (e) {
+            // Not JSON: ignore this block.
+          }
+        }
+      }
+    }
+    return payload || null;
+  }
+
+  // sequence guards async work: each call to next() invalidates the previous
+  // one, so a slow response cannot overwrite a newer render.
+  function sequence() {
+    var current = 0;
+    return {
+      next: function () {
+        current += 1;
+        var issued = current;
+        return function stale() {
+          return issued !== current;
+        };
+      },
+      cancel: function () {
+        current += 1;
+      },
+    };
+  }
+
+  // resultCode extracts the mcp-diary error code from a tool result, so the
+  // view can tell "already deleted" (404) from "changed elsewhere" (409).
+  function resultCode(result) {
+    var payload = result;
+    if (result && result.structuredContent !== undefined) payload = result.structuredContent;
+    return payload && payload.code !== undefined ? payload.code : undefined;
+  }
+
+  // errorText extracts the human-readable message from an error tool result.
+  function errorText(result) {
+    var payload = result;
+    if (result && result.structuredContent !== undefined) payload = result.structuredContent;
+    if (!payload) return "";
+    if (payload.message) return payload.message;
+    if (Array.isArray(result.content)) {
+      for (var i = 0; i < result.content.length; i++) {
+        if (result.content[i] && result.content[i].text) return String(result.content[i].text);
+      }
+    }
+    return "";
   }
 
   function el(tag, className, text) {
@@ -206,6 +316,10 @@
   window.diaryBridge = {
     uuid: uuid,
     unwrap: unwrap,
+    parseResult: parseResult,
+    sequence: sequence,
+    resultCode: resultCode,
+    errorText: errorText,
     el: el,
     formatDate: formatDate,
     snippet: snippet,

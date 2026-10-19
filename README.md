@@ -168,15 +168,18 @@ MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿�
 
 支持 [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) 的宿主（ChatGPT Connectors、Claude、VS Code Copilot 等）会把部分工具的结果渲染成内嵌界面：
 
-- `renderDiaryEntries` → 卡片列表：日期、农历、天气、正文摘要，点击展开全文，支持翻页。
+- `renderDiaryEntries` → 卡片列表：日期、农历、天气、正文摘要，点击展开全文，支持翻页，每张卡片右上角可删除。
 - `getDiaryEntry` → 单篇阅读卡片。
+
+删除是两步确认的：点卡片右上角的 ✕ 只会展开确认条（「删除 2026年10月18日星期日 的日记？删除后无法恢复。」），再点「删除」才会真正调用 `deleteDiaryEntry`；「取消」或 Esc 退出。删除成功后列表就地刷新（若当前页因此变空会自动回到上一页），并通过 `ui/update-model-context` 告诉模型哪篇日记已被删除；冲突（409）或已被别处删除（404）会在界面上说明原因。`deleteDiaryEntry` 声明为界面专用（`_meta.ui.visibility=["app"]`、`_meta["openai/visibility"]="private"`），模型看不到它，因此不存在模型绕过确认直接删除的路径；非 UI 客户端仍按原有工具调用方式使用。
 
 实现要点：
 
 - UI 是 `ui://mcp-diary/*.html` 资源（`text/html;profile=mcp-app`），完全自包含（内联 CSS/JS，无外部请求），随二进制 `go:embed`。
 - 工具通过 `_meta.ui.resourceUri`（以及 ChatGPT 兼容别名 `_meta["openai/outputTemplate"]`）关联界面；绑定逻辑在 `internal/transport/mcp/tools` 的注册表里，UI 声明集中在 `internal/transport/mcp/ui`。
 - **数据工具与渲染工具分离**：`listDiaryEntries` 等数据工具不带 UI，模型可以只读数据而不弹卡片；只有 `renderDiaryEntries` 负责展示。
-- 界面内的翻页/展开通过 MCP Apps 桥（`tools/call`）回调 `listDiaryEntries`，因此沿用调用方的 OAuth 身份，按用户隔离不变。
+- 界面内的翻页/删除通过 MCP Apps 桥（`tools/call`）回调 `listDiaryEntries` / `deleteDiaryEntry`，因此沿用调用方的 OAuth 身份，按用户隔离不变；每次调用都生成新的 `request_id`，服务端的幂等缓存不会复用旧结果。
+- 工具的 `tool-input` 通知只用来填充查询条件，不触发额外请求；结果以宿主推送（`tool-result`）为准，并用序号丢弃过期的 `tools/call` 响应，避免迟到响应覆盖新数据。
 - 不支持 UI 的客户端照常拿到结构化 JSON 与文本回退，行为与之前一致。
 
 人工自测：把服务暴露在公网 HTTPS（`--public-url`），在 ChatGPT 中添加连接器指向 `https://<host>/mcp`，然后问「看看我十月的日记」。
@@ -286,6 +289,8 @@ Web 参数：
   --log-level string        日志级别：debug/info/warn/error（默认 "info"）
   --log-format string       日志格式：text/json（默认 "text"）
 ```
+
+生产环境的访问与更新流程见 [ENV.md](ENV.md)。
 
 ## 安全模型
 

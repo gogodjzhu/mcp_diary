@@ -22,7 +22,7 @@ func (t uiTool) Handle(context.Context, mcp.CallToolRequest) (*mcp.CallToolResul
 }
 
 func TestRegistryBindsUIViews(t *testing.T) {
-	registry := tools.NewRegistry(uiTool{name: "renderDiaryEntries"}, uiTool{name: "getDiaryEntry"}, uiTool{name: "listDiaryEntries"})
+	registry := tools.NewRegistry(uiTool{name: "renderDiaryEntries"}, uiTool{name: "getDiaryEntry"}, uiTool{name: "listDiaryEntries"}, uiTool{name: "deleteDiaryEntry"})
 	registry.AddViews(ui.Views()...)
 
 	if got := len(registry.Views()); got != 2 {
@@ -53,6 +53,10 @@ func TestRegistryBindsUIViews(t *testing.T) {
 		t.Fatalf("openai/outputTemplate = %v", meta["openai/outputTemplate"])
 	}
 
+	if meta["openai/toolInvocation/invoking"] == nil {
+		t.Error("renderDiaryEntries must set invoking label")
+	}
+
 	// Data tools keep a clean definition.
 	plain := registry.Tool("listDiaryEntries")
 	if plain == nil {
@@ -60,6 +64,42 @@ func TestRegistryBindsUIViews(t *testing.T) {
 	}
 	if plain.Meta != nil {
 		t.Fatal("listDiaryEntries must not advertise UI metadata")
+	}
+}
+
+// TestRegistryHidesUIToolsFromModel checks that a tool the view calls but the
+// model must not see (deleteDiaryEntry) keeps its normal definition for the
+// server while advertising app-only visibility to UI hosts.
+func TestRegistryHidesUIToolsFromModel(t *testing.T) {
+	registry := tools.NewRegistry(uiTool{name: "deleteDiaryEntry"})
+	registry.AddViews(ui.Views()...)
+	registry.SetOrigin("https://mcp.example.com")
+
+	plain := registry.Tools()[0].Definition()
+	if plain.Meta != nil {
+		t.Fatal("tool implementation must not carry UI metadata")
+	}
+
+	def := registry.Tool("deleteDiaryEntry")
+	b, err := def.MarshalJSON()
+	if err != nil {
+		t.Fatalf("marshal tool: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("decode tool: %v", err)
+	}
+	meta, _ := raw["_meta"].(map[string]any)
+	box, _ := meta["ui"].(map[string]any)
+	visibility, _ := box["visibility"].([]any)
+	if len(visibility) != 1 || visibility[0] != "app" {
+		t.Fatalf("ui.visibility = %v, want [app]", box["visibility"])
+	}
+	if meta["openai/visibility"] != "private" {
+		t.Fatalf("openai/visibility = %v, want private", meta["openai/visibility"])
+	}
+	if box["domain"] != "https://mcp.example.com" {
+		t.Fatalf("domain = %v", box["domain"])
 	}
 }
 
@@ -103,5 +143,10 @@ func TestRegistryServesUIResource(t *testing.T) {
 	box, _ := text.Meta["ui"].(map[string]any)
 	if box["domain"] != "https://mcp.example.com" {
 		t.Fatalf("domain = %v", box["domain"])
+	}
+	// The widget description is resource metadata: it tells the model the view
+	// itself already shows the entries.
+	if desc, _ := text.Meta["openai/widgetDescription"].(string); desc == "" {
+		t.Error("resource _meta.openai/widgetDescription missing")
 	}
 }

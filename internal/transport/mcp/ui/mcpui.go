@@ -49,31 +49,54 @@ type View struct {
 	Tools []string
 	// HTML is the document served for URI.
 	HTML []byte
+	// ModelDescription is the summary ChatGPT shows to the model while the
+	// view is displayed (openai/widgetDescription). It reduces redundant
+	// assistant narration. Resource metadata only, never a tool field.
+	ModelDescription string
+	// Invoking and Invoked are the ChatGPT tool-invocation status labels
+	// (<= 64 characters each).
+	Invoking string
+	Invoked  string
+	// UIOnlyTools lists tools the view may call but the model must not see.
+	UIOnlyTools []string
 }
 
 // Meta returns the _meta object a host reads to render the view in an MCP
 // Apps compatible client. The UI is fully self-contained (inline CSS and JS),
 // so the content security policy stays empty: no external origin is needed.
 func (v View) Meta() map[string]any {
-	return map[string]any{
-		"ui": map[string]any{
-			"prefersBorder": true,
-			"csp": map[string]any{
-				"connectDomains":  []string{},
-				"resourceDomains": []string{},
-			},
+	ui := map[string]any{
+		"prefersBorder": true,
+		"csp": map[string]any{
+			"connectDomains":  []string{},
+			"resourceDomains": []string{},
 		},
 	}
+	meta := map[string]any{"ui": ui}
+	if v.ModelDescription != "" {
+		meta["openai/widgetDescription"] = v.ModelDescription
+	}
+	return meta
 }
 
 // ToolMeta returns the _meta object attached to a tool definition so the host
 // associates the tool call with the view. Both the portable MCP Apps field and
 // the ChatGPT compatibility alias are set.
+//
+// Invocation labels are ChatGPT extensions: they let the host say "loading"
+// instead of echoing raw tool activity while the view mounts.
 func (v View) ToolMeta() map[string]any {
-	return map[string]any{
+	meta := map[string]any{
 		"ui":                    map[string]any{"resourceUri": v.URI},
 		"openai/outputTemplate": v.URI,
 	}
+	if v.Invoking != "" {
+		meta["openai/toolInvocation/invoking"] = v.Invoking
+	}
+	if v.Invoked != "" {
+		meta["openai/toolInvocation/invoked"] = v.Invoked
+	}
+	return meta
 }
 
 // Views returns the UI views in registration order.
@@ -84,14 +107,26 @@ func Views() []View {
 			Name:        "diary-entries",
 			Description: "Interactive list of committed diary entries.",
 			Tools:       []string{"renderDiaryEntries"},
-			HTML:        mustAsset("assets/entries.html"),
+			// deleteDiaryEntry is callable from the view only: the list renders
+			// a two-step confirmation itself, so the model never needs to see
+			// the tool.
+			UIOnlyTools: []string{"deleteDiaryEntry"},
+			ModelDescription: "An interactive card list of the user's committed diary entries. " +
+				"Each card shows the date and the start of the entry; clicking expands it. " +
+				"The list has its own pagination and delete controls.",
+			Invoking: "Loading diary entries…",
+			Invoked:  "Diary entries ready",
+			HTML:     mustAsset("assets/entries.html"),
 		},
 		{
-			URI:         entryURI,
-			Name:        "diary-entry",
-			Description: "Interactive reader for a single committed diary entry.",
-			Tools:       []string{"getDiaryEntry"},
-			HTML:        mustAsset("assets/entry.html"),
+			URI:              entryURI,
+			Name:             "diary-entry",
+			Description:      "Interactive reader for a single committed diary entry.",
+			Tools:            []string{"getDiaryEntry"},
+			ModelDescription: "A reader for one committed diary entry: its date, metadata and full text.",
+			Invoking:         "Opening diary entry…",
+			Invoked:          "Diary entry ready",
+			HTML:             mustAsset("assets/entry.html"),
 		},
 	}
 }
@@ -103,6 +138,22 @@ func ToolMetas() map[string]map[string]any {
 	for _, view := range Views() {
 		for _, tool := range view.Tools {
 			out[tool] = view.ToolMeta()
+		}
+	}
+	return out
+}
+
+// RegistryVisibility returns the _meta to attach to tools that the view calls
+// but the model must not see, keyed by tool name. The portable MCP Apps key
+// and the ChatGPT compatibility field are both set.
+func RegistryVisibility() map[string]map[string]any {
+	out := make(map[string]map[string]any)
+	for _, view := range Views() {
+		for _, tool := range view.UIOnlyTools {
+			out[tool] = map[string]any{
+				"ui":                map[string]any{"visibility": []string{"app"}},
+				"openai/visibility": "private",
+			}
 		}
 	}
 	return out

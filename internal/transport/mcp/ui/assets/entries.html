@@ -14,6 +14,8 @@
         --diary-border: var(--color-border-secondary, rgba(128, 128, 128, 0.25));
         --diary-accent: var(--color-text-info, #2563eb);
         --diary-danger: var(--color-text-danger, #b42318);
+        --diary-danger-bg: var(--color-background-danger, rgba(180, 35, 24, 0.08));
+        --diary-radius: var(--border-radius-md, 10px);
       }
       * {
         box-sizing: border-box;
@@ -24,7 +26,7 @@
         padding: 0;
         background: transparent;
         color: var(--diary-text);
-        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font: 14px/1.5 var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
       }
       .wrap {
         display: flex;
@@ -52,13 +54,14 @@
         gap: 8px;
       }
       .card {
+        position: relative;
         display: flex;
         flex-direction: column;
         gap: 4px;
         width: 100%;
         padding: 10px 12px;
         border: 1px solid var(--diary-border);
-        border-radius: 10px;
+        border-radius: var(--diary-radius);
         background: var(--diary-card);
         color: inherit;
         font: inherit;
@@ -70,11 +73,17 @@
         border-color: var(--diary-accent);
         outline: none;
       }
+      .card.deleting {
+        border-color: var(--diary-danger);
+        background: var(--diary-danger-bg);
+        cursor: default;
+      }
       .row {
         display: flex;
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
+        padding-right: 24px;
       }
       .date {
         font-weight: 600;
@@ -99,6 +108,85 @@
         white-space: pre-wrap;
         word-break: break-word;
       }
+      /* The row menu sits in the corner and only shows on hover/focus so the
+         destructive action is never the default click target. */
+      .toolbar {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        display: flex;
+        gap: 2px;
+        opacity: 0;
+        transition: opacity 120ms ease;
+      }
+      .card:hover .toolbar,
+      .card:focus-within .toolbar,
+      .toolbar:focus-within {
+        opacity: 1;
+      }
+      @media (hover: none) {
+        .toolbar {
+          opacity: 1;
+        }
+      }
+      .icon-btn {
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--diary-muted);
+        font: inherit;
+        font-size: 14px;
+        line-height: 22px;
+        cursor: pointer;
+      }
+      .icon-btn:hover,
+      .icon-btn:focus-visible {
+        background: var(--diary-bg);
+        color: var(--diary-text);
+        outline: none;
+      }
+      .confirm {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 6px;
+        padding-top: 8px;
+        border-top: 1px dashed var(--diary-border);
+      }
+      .confirm p {
+        margin: 0;
+        color: var(--diary-danger);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .confirm .actions {
+        display: flex;
+        gap: 8px;
+      }
+      .btn {
+        border: 1px solid var(--diary-border);
+        background: transparent;
+        color: var(--diary-text);
+        border-radius: 8px;
+        padding: 3px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .btn.danger {
+        border-color: var(--diary-danger);
+        color: var(--diary-danger);
+      }
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      .btn:focus-visible {
+        outline: 2px solid var(--diary-accent);
+        outline-offset: 1px;
+      }
       .state {
         color: var(--diary-muted);
         padding: 16px 0;
@@ -107,10 +195,18 @@
       .error {
         color: var(--diary-danger);
       }
+      .toast {
+        color: var(--diary-muted);
+        font-size: 12px;
+        padding: 4px 0;
+      }
+      .toast.error {
+        color: var(--diary-danger);
+      }
       .empty {
         color: var(--diary-muted);
         border: 1px dashed var(--diary-border);
-        border-radius: 10px;
+        border-radius: var(--diary-radius);
         padding: 16px;
         text-align: center;
       }
@@ -147,6 +243,7 @@
       </div>
       <div class="cards" id="cards"></div>
       <div class="state" id="state">加载中…</div>
+      <div class="toast" id="toast" hidden></div>
       <div class="pager" id="pager">
         <button type="button" id="prev">上一页</button>
         <span class="meta" id="page"></span>
@@ -165,6 +262,7 @@
         var state = document.getElementById("state");
         var count = document.getElementById("count");
         var title = document.getElementById("title");
+        var toast = document.getElementById("toast");
         var pager = document.getElementById("pager");
         var prev = document.getElementById("prev");
         var next = document.getElementById("next");
@@ -173,12 +271,23 @@
         var query = { diary_date_from: "", diary_date_to: "", page: 1, page_size: 20 };
         var data = null;
         var expanded = "";
+        // deleting is the entry awaiting confirmation; busy is the entry whose
+        // delete request is in flight. At most one card is in either state.
+        var deleting = "";
+        var busy = "";
         var loading = false;
+        var loads = B.sequence();
 
         function setState(text, isError) {
           state.textContent = text || "";
           state.className = isError ? "state error" : "state";
           state.hidden = !text;
+        }
+
+        function setToast(text, isError) {
+          toast.textContent = text || "";
+          toast.className = isError ? "toast error" : "toast";
+          toast.hidden = !text;
         }
 
         function readQuery(input) {
@@ -192,15 +301,7 @@
           }
         }
 
-        var expandedIndex = -1;
-
-        function renderCard(entry) {
-          var card = B.el("button", "card");
-          card.type = "button";
-          card.setAttribute("aria-expanded", String(expanded === entry.entry_id));
-
-          var row = B.el("div", "row");
-          row.appendChild(B.el("span", "date", B.formatDate(entry.diary_date)));
+        function entryBits(entry) {
           var meta = entry.meta || {};
           var bits = [];
           if (meta.lunar) bits.push(meta.lunar);
@@ -210,10 +311,56 @@
               bits.push("更新 " + new Date(entry.updated_at).toLocaleDateString());
             } catch (e) {}
           }
+          return bits;
+        }
+
+        function confirmNode(entry) {
+          var box = B.el("div", "confirm");
+          box.appendChild(
+            B.el("p", null, "删除 " + B.formatDate(entry.diary_date) + " 的日记？删除后无法恢复。")
+          );
+          var actions = B.el("div", "actions");
+          var del = B.el("button", "btn danger", busy === entry.entry_id ? "删除中…" : "删除");
+          del.type = "button";
+          del.disabled = busy === entry.entry_id;
+          del.setAttribute("data-action", "delete");
+          var cancel = B.el("button", "btn", "取消");
+          cancel.type = "button";
+          cancel.disabled = busy === entry.entry_id;
+          cancel.setAttribute("data-action", "cancel");
+          actions.appendChild(del);
+          actions.appendChild(cancel);
+          box.appendChild(actions);
+          return box;
+        }
+
+        function renderCard(entry, index) {
+          var isDeleting = deleting === entry.entry_id;
+          var card = B.el("div", "card" + (isDeleting ? " deleting" : ""));
+          card.setAttribute("role", "button");
+          card.setAttribute("tabindex", "0");
+          card.setAttribute("aria-expanded", String(expanded === entry.entry_id));
+          card.setAttribute("data-entry-id", entry.entry_id);
+          card.setAttribute("data-index", String(index));
+
+          var row = B.el("div", "row");
+          row.appendChild(B.el("span", "date", B.formatDate(entry.diary_date)));
+          var bits = entryBits(entry);
           if (bits.length) row.appendChild(B.el("span", "meta", bits.join(" · ")));
           card.appendChild(row);
 
-          if (expanded === entry.entry_id) {
+          var toolbar = B.el("div", "toolbar");
+          var remove = B.el("button", "icon-btn", "✕");
+          remove.type = "button";
+          remove.title = "删除这篇日记";
+          remove.setAttribute("aria-label", "删除 " + B.formatDate(entry.diary_date) + " 的日记");
+          remove.setAttribute("data-action", "ask-delete");
+          toolbar.appendChild(remove);
+          card.appendChild(toolbar);
+
+          if (isDeleting) {
+            card.appendChild(confirmNode(entry));
+          } else if (expanded === entry.entry_id) {
             card.appendChild(B.el("div", "full", entry.content || ""));
             var hint = B.el("span", "meta", entry.revision ? "收起 · v" + entry.revision : "收起");
             hint.style.marginTop = "6px";
@@ -221,15 +368,6 @@
           } else {
             card.appendChild(B.el("div", "snippet", B.snippet(entry.content, 160) || "（空）"));
           }
-
-          card.addEventListener("click", function () {
-            if (expanded === entry.entry_id) {
-              expanded = "";
-            } else {
-              expanded = entry.entry_id;
-            }
-            paint();
-          });
           return card;
         }
 
@@ -239,37 +377,124 @@
           var entries = data.entries || [];
           count.textContent = data.total ? "共 " + data.total + " 条" : "";
           if (!entries.length) {
-            setState("");
             var empty = B.el("div", "empty", "这段时间还没有已提交的日记。");
             cards.appendChild(empty);
             pager.hidden = true;
             return;
           }
-          setState("");
-          entries.forEach(function (entry) {
-            cards.appendChild(renderCard(entry));
+          entries.forEach(function (entry, index) {
+            cards.appendChild(renderCard(entry, index));
           });
-
-          // Expand the card the host asked for, then scroll it into view.
-          var focus = expandedIndex;
-          expandedIndex = -1;
-          if (focus >= 0) {
-            var target = cards.children[focus];
-            if (target && target.scrollIntoView) target.scrollIntoView({ block: "nearest" });
-          }
 
           var pages = Math.max(1, Math.ceil((data.total || 0) / (data.page_size || query.page_size)));
           var page = data.page || query.page;
           pager.hidden = pages <= 1;
           pageLabel.textContent = page + " / " + pages;
-          prev.disabled = page <= 1;
-          next.disabled = page >= pages;
+          prev.disabled = page <= 1 || loading;
+          next.disabled = page >= pages || loading;
         }
 
-        function load(page, focusID) {
-          if (loading) return;
+        function forEachCard(fn) {
+          var entries = (data && data.entries) || [];
+          Array.prototype.forEach.call(cards.querySelectorAll(".card"), function (card) {
+            var id = card.getAttribute("data-entry-id");
+            for (var i = 0; i < entries.length; i++) {
+              if (entries[i].entry_id === id) {
+                fn(card, entries[i]);
+                return;
+              }
+            }
+          });
+        }
+
+        // update focuses the moved element and keeps its ARIA state in sync
+        // without rebuilding the list, so hover and focus survive clicks.
+        function update() {
+          forEachCard(function (card, entry) {
+            card.setAttribute("aria-expanded", String(expanded === entry.entry_id));
+          });
+          prev.disabled = (data ? data.page : query.page) <= 1 || loading;
+        }
+
+        function askDelete(entryID) {
+          deleting = entryID;
+          setToast("");
+          paint();
+          var target = cards.querySelector('[data-entry-id="' + cssEscape(entryID) + '"] [data-action="delete"]');
+          if (target) target.focus();
+        }
+
+        function cssEscape(value) {
+          if (window.CSS && CSS.escape) return CSS.escape(value);
+          return String(value).replace(/["\\]/g, "\\$&");
+        }
+
+        function describeDelete(entry) {
+          return "用户在弹出的日记列表界面中删除了 " + entry.diary_date + " 的日记（" + entry.entry_id + "）。";
+        }
+
+        function deleteEntry(entry, page) {
+          if (busy) return;
+          busy = entry.entry_id;
+          update();
+          var del = cards.querySelector('[data-entry-id="' + cssEscape(entry.entry_id) + '"] [data-action="delete"]');
+          if (del) {
+            del.disabled = true;
+            del.textContent = "删除中…";
+          }
+          var cancel = cards.querySelector('[data-entry-id="' + cssEscape(entry.entry_id) + '"] [data-action="cancel"]');
+          if (cancel) cancel.disabled = true;
+          window.diary
+            .callTool("deleteDiaryEntry", {
+              request_id: B.uuid(),
+              entry_id: entry.entry_id,
+              expected_revision: entry.revision,
+            })
+            .then(B.unwrap)
+            .then(function () {
+              busy = "";
+              deleting = "";
+              setToast("已删除 " + B.formatDate(entry.diary_date) + " 的日记。");
+              // Loading the current page replaces the deleted card and steps
+              // back a page if it left this page empty.
+              return load(page);
+            })
+            .catch(function (err) {
+              busy = "";
+              var code = err && err.code;
+              if (code === 404) {
+                // Already gone (deleted elsewhere): reconcile with the server.
+                deleting = "";
+                setToast("这篇日记已经不存在了。", true);
+                return load(page);
+              }
+              // 409 or a transient failure: leave the confirmation open so the
+              // user can retry, or cancel and refresh by hand.
+              if (code === 409) {
+                setToast("这篇日记在别处被修改过，请刷新后再删除。", true);
+              } else {
+                setToast("删除失败：" + (err && err.message ? err.message : String(err)), true);
+              }
+              paint();
+              var retry = cards.querySelector('[data-entry-id="' + cssEscape(entry.entry_id) + '"] [data-action="delete"]');
+              if (retry) retry.focus();
+            })
+            .then(function () {
+              // Tell the model what changed so follow-up turns do not quote a
+              // deleted entry. Hosts without support simply ignore it.
+              return window.diary.updateModelContext(
+                [{ type: "text", text: describeDelete(entry) }],
+                { deleted_entry_ids: [entry.entry_id], diary_dates: [entry.diary_date] }
+              );
+            });
+        }
+
+        function load(page) {
+          var stale = loads.next();
           loading = true;
-          setState("加载中…");
+          deleting = "";
+          if (!data) setState("加载中…");
+          paint();
           window.diary
             .callTool("listDiaryEntries", {
               request_id: B.uuid(),
@@ -280,45 +505,106 @@
             })
             .then(B.unwrap)
             .then(function (result) {
+              if (stale()) return;
               data = result || { entries: [], page: page, page_size: query.page_size, total: 0 };
-              if (focusID) {
-                expanded = focusID;
-                expandedIndex = (data.entries || []).findIndex(function (e) {
-                  return e.entry_id === focusID;
-                });
+              if (!data.entries.length && data.page > 1) {
+                // The last item on the last page was deleted: step back.
+                loads.cancel();
+                load(data.page - 1);
+                return;
               }
+              setState("");
+              var focus = expanded;
               paint();
+              if (focus) {
+                var target = cards.querySelector('[data-entry-id="' + cssEscape(focus) + '"]');
+                if (target && target.scrollIntoView) target.scrollIntoView({ block: "nearest" });
+              }
             })
             .catch(function (err) {
+              if (stale()) return;
+              var code = err && err.code;
+              if (code === 404) {
+                // A deleted entry made the requested page disappear.
+                loads.cancel();
+                if (page > 1) {
+                  load(1);
+                  return;
+                }
+              }
               setState("加载失败：" + (err && err.message ? err.message : String(err)), true);
             })
             .finally(function () {
+              if (stale()) return;
               loading = false;
+              paint();
             });
         }
 
+        function onCardClick(card, event) {
+          var action = event.target && event.target.getAttribute && event.target.getAttribute("data-action");
+          var entryID = card.getAttribute("data-entry-id");
+          var entry = (data.entries || []).filter(function (e) {
+            return e.entry_id === entryID;
+          })[0];
+          if (!entry) return;
+
+          if (action === "ask-delete") {
+            event.stopPropagation();
+            askDelete(entryID);
+            return;
+          }
+          if (deleting === entryID) {
+            if (action === "cancel") {
+              deleting = "";
+              paint();
+            } else if (action === "delete") {
+              deleteEntry(entry, data.page || 1);
+            }
+            return;
+          }
+          expanded = expanded === entryID ? "" : entryID;
+          paint();
+          var again = cards.querySelector('[data-entry-id="' + cssEscape(entryID) + '"]');
+          if (again) again.focus();
+        }
+
+        cards.addEventListener("click", function (event) {
+          var card = event.target.closest ? event.target.closest(".card") : null;
+          if (card) onCardClick(card, event);
+        });
+        cards.addEventListener("keydown", function (event) {
+          var card = event.target.classList && event.target.classList.contains("card") ? event.target : null;
+          if (!card) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onCardClick(card, event);
+          } else if (event.key === "Escape" && deleting) {
+            deleting = "";
+            paint();
+          }
+        });
+
         prev.addEventListener("click", function () {
+          if (loading) return;
           expanded = "";
           load(Math.max(1, (data ? data.page : query.page) - 1));
         });
         next.addEventListener("click", function () {
+          if (loading) return;
           expanded = "";
           load((data ? data.page : query.page) + 1);
         });
 
-        document.getElementById("title").addEventListener("click", function () {
-          if (data) load(1);
-        });
-
-        window.diary.onInput(function (input) {
-          readQuery(input);
-          // Rerun the same query so pagination works even when the host only
-          // pushed the tool call arguments to the view.
-          load(query.page);
-        });
+        // Tool input only describes the query. It must not trigger a second
+        // request: the host pushes the authoritative result right after, and a
+        // late-arriving reload would overwrite it.
+        window.diary.onInput(readQuery);
 
         window.diary.onResult(function (result) {
-          var payload = result && result.structuredContent !== undefined ? result.structuredContent : null;
+          loads.cancel();
+          var payload = B.parseResult(result);
+          if (payload && payload.cancelled) return;
           if (payload && payload.code !== undefined) {
             if (payload.code !== 0) {
               setState("加载失败：" + (payload.message || "未知错误"), true);
@@ -337,6 +623,29 @@
             load(query.page);
           }
         });
+
+        // A widget may stay mounted across turns; if the host re-invokes the
+        // render tool, the next result should win over any reload in flight.
+        window.diary.onToolResult(function (result) {
+          var payload = B.parseResult(result);
+          if (!payload || payload.cancelled) return;
+          if (payload.code !== undefined && payload.code !== 0) return;
+          var body = payload.code !== undefined ? payload.data : payload;
+          if (body && Array.isArray(body.entries)) {
+            loads.cancel();
+            loading = false;
+            data = body;
+            if (!data.page) data.page = query.page;
+            if (!data.page_size) data.page_size = query.page_size;
+            setState("");
+            paint();
+          }
+        });
+
+        // Fallback for hosts that mount the view without pushing the result.
+        setTimeout(function () {
+          if (!data) load(query.page);
+        }, 1500);
       })();
     </script>
   </body>

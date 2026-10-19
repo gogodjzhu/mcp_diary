@@ -73,7 +73,8 @@ func (r *Registry) Bind(s *server.MCPServer) {
 
 // definition returns the tool definition with its _meta applied. The tool's
 // own metadata wins; a view that lists the tool adds the UI binding (and the
-// ChatGPT alias) unless the tool already declares one.
+// ChatGPT alias) unless the tool already declares one. Tools a view may call
+// but the model must not see are marked private.
 func (r *Registry) definition(t Tool) mcp.Tool {
 	def := t.Definition()
 
@@ -85,8 +86,27 @@ func (r *Registry) definition(t Tool) mcp.Tool {
 	}
 	if meta, ok := ui.ToolMetas()[t.Name()]; ok {
 		if _, declared := merged["ui"]; !declared {
-			merged["ui"] = meta["ui"]
-			merged["openai/outputTemplate"] = meta["openai/outputTemplate"]
+			for k, v := range meta {
+				merged[k] = v
+			}
+			if box, ok := merged["ui"].(map[string]any); ok {
+				merged["ui"] = cloneMap(box)
+			}
+		}
+	}
+	if meta, ok := ui.RegistryVisibility()[t.Name()]; ok {
+		// The view declares visibility; merge it into whatever ui box the
+		// tool already has so the resource binding survives.
+		box, _ := merged["ui"].(map[string]any)
+		box = cloneMap(box)
+		for k, v := range meta["ui"].(map[string]any) {
+			box[k] = v
+		}
+		merged["ui"] = box
+		for k, v := range meta {
+			if k != "ui" {
+				merged[k] = v
+			}
 		}
 	}
 	if len(merged) == 0 {
@@ -95,6 +115,14 @@ func (r *Registry) definition(t Tool) mcp.Tool {
 	merged = withDomain(merged, r.origin)
 	def.Meta = mcp.NewMetaFromMap(merged)
 	return def
+}
+
+func cloneMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in)+1)
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // withDomain adds the public origin to the ui metadata when known.

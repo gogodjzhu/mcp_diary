@@ -89,6 +89,8 @@
         var meta = document.getElementById("meta");
         var content = document.getElementById("content");
         var state = document.getElementById("state");
+        var pendingID = "";
+        var skips = B.sequence();
 
         function setState(text, isError) {
           state.textContent = text || "";
@@ -114,24 +116,32 @@
         }
 
         function load(entryID) {
+          var stale = skips.next();
           setState("加载中…");
           window.diary
             .callTool("getDiaryEntry", { request_id: B.uuid(), entry_id: entryID })
             .then(B.unwrap)
-            .then(render)
+            .then(function (entry) {
+              if (!stale()) render(entry);
+            })
             .catch(function (err) {
+              if (stale()) return;
               setState("加载失败：" + (err && err.message ? err.message : String(err)), true);
             });
         }
 
+        // Input only seeds the view. It must not trigger a second request: the
+        // host pushes the authoritative result right after, and a late reload
+        // would overwrite it.
         window.diary.onInput(function (input) {
           var id = input && input.entry_id;
-          if (!id) return;
-          load(id);
+          if (id) pendingID = id;
         });
 
         window.diary.onResult(function (result) {
-          var payload = result && result.structuredContent !== undefined ? result.structuredContent : null;
+          skips.cancel();
+          var payload = B.parseResult(result);
+          if (payload && payload.cancelled) return;
           if (payload && payload.code !== undefined) {
             if (payload.code !== 0) {
               setState("加载失败：" + (payload.message || "未知错误"), true);
@@ -141,6 +151,12 @@
           }
           if (payload && payload.entry_id) render(payload);
         });
+
+        // Fallback for hosts that mount the view without the tool result.
+        setTimeout(function () {
+          if (pendingID && !root.hidden) return;
+          if (pendingID) load(pendingID);
+        }, 1500);
       })();
     </script>
   </body>
