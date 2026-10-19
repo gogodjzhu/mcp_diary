@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>日记列表</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --diary-bg: var(--color-background-secondary, Canvas);
+        --diary-card: var(--color-background-primary, Canvas);
+        --diary-text: var(--color-text-primary, CanvasText);
+        --diary-muted: var(--color-text-secondary, GrayText);
+        --diary-border: var(--color-border-secondary, rgba(128, 128, 128, 0.25));
+        --diary-accent: var(--color-text-info, #2563eb);
+        --diary-danger: var(--color-text-danger, #b42318);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--diary-text);
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      .wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .head h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .count {
+        color: var(--diary-muted);
+        font-size: 12px;
+      }
+      .cards {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--diary-border);
+        border-radius: 10px;
+        background: var(--diary-card);
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .card:hover,
+      .card:focus-visible {
+        border-color: var(--diary-accent);
+        outline: none;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .date {
+        font-weight: 600;
+      }
+      .meta {
+        color: var(--diary-muted);
+        font-size: 12px;
+      }
+      .snippet {
+        color: var(--diary-text);
+        opacity: 0.85;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        white-space: pre-wrap;
+      }
+      .full {
+        margin-top: 6px;
+        padding-top: 8px;
+        border-top: 1px dashed var(--diary-border);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .state {
+        color: var(--diary-muted);
+        padding: 16px 0;
+        text-align: center;
+      }
+      .error {
+        color: var(--diary-danger);
+      }
+      .empty {
+        color: var(--diary-muted);
+        border: 1px dashed var(--diary-border);
+        border-radius: 10px;
+        padding: 16px;
+        text-align: center;
+      }
+      .pager {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 12px;
+      }
+      .pager button {
+        border: 1px solid var(--diary-border);
+        background: transparent;
+        color: var(--diary-accent);
+        border-radius: 8px;
+        padding: 4px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .pager button:disabled {
+        color: var(--diary-muted);
+        cursor: default;
+        opacity: 0.6;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap" aria-live="polite">
+      <div class="head">
+        <h1 id="title">日记</h1>
+        <span class="count" id="count"></span>
+      </div>
+      <div class="cards" id="cards"></div>
+      <div class="state" id="state">加载中…</div>
+      <div class="pager" id="pager">
+        <button type="button" id="prev">上一页</button>
+        <span class="meta" id="page"></span>
+        <button type="button" id="next">下一页</button>
+      </div>
+    </main>
+    <script>
+      /* BRIDGE */
+    </script>
+    <script>
+      (function () {
+        "use strict";
+
+        var B = window.diaryBridge;
+        var cards = document.getElementById("cards");
+        var state = document.getElementById("state");
+        var count = document.getElementById("count");
+        var title = document.getElementById("title");
+        var pager = document.getElementById("pager");
+        var prev = document.getElementById("prev");
+        var next = document.getElementById("next");
+        var pageLabel = document.getElementById("page");
+
+        var query = { diary_date_from: "", diary_date_to: "", page: 1, page_size: 20 };
+        var data = null;
+        var expanded = "";
+        var loading = false;
+
+        function setState(text, isError) {
+          state.textContent = text || "";
+          state.className = isError ? "state error" : "state";
+          state.hidden = !text;
+        }
+
+        function readQuery(input) {
+          var args = input || {};
+          query.diary_date_from = args.diary_date_from || "";
+          query.diary_date_to = args.diary_date_to || "";
+          query.page = Number(args.page) > 0 ? Number(args.page) : 1;
+          query.page_size = Number(args.page_size) > 0 ? Number(args.page_size) : 20;
+          if (query.diary_date_from || query.diary_date_to) {
+            title.textContent = "日记 · " + (query.diary_date_from || "…") + " ~ " + (query.diary_date_to || "…");
+          }
+        }
+
+        var expandedIndex = -1;
+
+        function renderCard(entry) {
+          var card = B.el("button", "card");
+          card.type = "button";
+          card.setAttribute("aria-expanded", String(expanded === entry.entry_id));
+
+          var row = B.el("div", "row");
+          row.appendChild(B.el("span", "date", B.formatDate(entry.diary_date)));
+          var meta = entry.meta || {};
+          var bits = [];
+          if (meta.lunar) bits.push(meta.lunar);
+          if (meta.weather) bits.push(meta.weather);
+          if (entry.updated_at) {
+            try {
+              bits.push("更新 " + new Date(entry.updated_at).toLocaleDateString());
+            } catch (e) {}
+          }
+          if (bits.length) row.appendChild(B.el("span", "meta", bits.join(" · ")));
+          card.appendChild(row);
+
+          if (expanded === entry.entry_id) {
+            card.appendChild(B.el("div", "full", entry.content || ""));
+            var hint = B.el("span", "meta", entry.revision ? "收起 · v" + entry.revision : "收起");
+            hint.style.marginTop = "6px";
+            card.appendChild(hint);
+          } else {
+            card.appendChild(B.el("div", "snippet", B.snippet(entry.content, 160) || "（空）"));
+          }
+
+          card.addEventListener("click", function () {
+            if (expanded === entry.entry_id) {
+              expanded = "";
+            } else {
+              expanded = entry.entry_id;
+            }
+            paint();
+          });
+          return card;
+        }
+
+        function paint() {
+          cards.textContent = "";
+          if (!data) return;
+          var entries = data.entries || [];
+          count.textContent = data.total ? "共 " + data.total + " 条" : "";
+          if (!entries.length) {
+            setState("");
+            var empty = B.el("div", "empty", "这段时间还没有已提交的日记。");
+            cards.appendChild(empty);
+            pager.hidden = true;
+            return;
+          }
+          setState("");
+          entries.forEach(function (entry) {
+            cards.appendChild(renderCard(entry));
+          });
+
+          // Expand the card the host asked for, then scroll it into view.
+          var focus = expandedIndex;
+          expandedIndex = -1;
+          if (focus >= 0) {
+            var target = cards.children[focus];
+            if (target && target.scrollIntoView) target.scrollIntoView({ block: "nearest" });
+          }
+
+          var pages = Math.max(1, Math.ceil((data.total || 0) / (data.page_size || query.page_size)));
+          var page = data.page || query.page;
+          pager.hidden = pages <= 1;
+          pageLabel.textContent = page + " / " + pages;
+          prev.disabled = page <= 1;
+          next.disabled = page >= pages;
+        }
+
+        function load(page, focusID) {
+          if (loading) return;
+          loading = true;
+          setState("加载中…");
+          window.diary
+            .callTool("listDiaryEntries", {
+              request_id: B.uuid(),
+              diary_date_from: query.diary_date_from || undefined,
+              diary_date_to: query.diary_date_to || undefined,
+              page: page,
+              page_size: query.page_size,
+            })
+            .then(B.unwrap)
+            .then(function (result) {
+              data = result || { entries: [], page: page, page_size: query.page_size, total: 0 };
+              if (focusID) {
+                expanded = focusID;
+                expandedIndex = (data.entries || []).findIndex(function (e) {
+                  return e.entry_id === focusID;
+                });
+              }
+              paint();
+            })
+            .catch(function (err) {
+              setState("加载失败：" + (err && err.message ? err.message : String(err)), true);
+            })
+            .finally(function () {
+              loading = false;
+            });
+        }
+
+        prev.addEventListener("click", function () {
+          expanded = "";
+          load(Math.max(1, (data ? data.page : query.page) - 1));
+        });
+        next.addEventListener("click", function () {
+          expanded = "";
+          load((data ? data.page : query.page) + 1);
+        });
+
+        document.getElementById("title").addEventListener("click", function () {
+          if (data) load(1);
+        });
+
+        window.diary.onInput(function (input) {
+          readQuery(input);
+          // Rerun the same query so pagination works even when the host only
+          // pushed the tool call arguments to the view.
+          load(query.page);
+        });
+
+        window.diary.onResult(function (result) {
+          var payload = result && result.structuredContent !== undefined ? result.structuredContent : null;
+          if (payload && payload.code !== undefined) {
+            if (payload.code !== 0) {
+              setState("加载失败：" + (payload.message || "未知错误"), true);
+              return;
+            }
+            payload = payload.data;
+          }
+          // The render tool echoes the same shape as listDiaryEntries.
+          if (payload && Array.isArray(payload.entries)) {
+            data = payload;
+            if (!data.page) data.page = query.page;
+            if (!data.page_size) data.page_size = query.page_size;
+            setState("");
+            paint();
+          } else if (!data) {
+            load(query.page);
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

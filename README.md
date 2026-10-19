@@ -18,6 +18,7 @@
 - **封装的沙箱存储**：日记数据通过沙箱化文件服务落盘（原子写入、路径校验、防 `../` 与符号链接逃逸），不直接对外暴露文件接口。
 - **只读模式**：一键禁用所有写操作，适合只读检索场景。
 - **结构化输出**：每个工具同时返回结构化内容与可读的 JSON 文本。
+- **可选交互界面**：实现 MCP Apps 的宿主（ChatGPT、Claude 等）把日记列表渲染成可展开、可翻页的卡片；其他客户端行为不变。
 - **可扩展架构**：新增工具只需实现 `tools.Tool` 接口并注册即可。
 - **优雅退出**：监听 `SIGINT` / `SIGTERM`，HTTP 服务平滑关闭。
 
@@ -37,6 +38,7 @@ internal/
     mcp/                      MCP Server 组装与 Streamable HTTP 传输
       tools/                  Tool 接口 + 注册表 + 结果辅助函数
         diary/                日记 MCP 工具
+      ui/                      MCP Apps 交互界面（自包含 HTML，go:embed）
     httpapi/                  REST API（/api/*），复用同一套 OAuth 校验
     webui/                    go:embed 的前端产物与静态文件服务
   platform/                   基础设施
@@ -155,11 +157,29 @@ MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿�
 | `getDiaryEntry` | 读取正式日记 | ✅ |
 | `updateDiaryEntry` | 整体替换正式日记正文 | |
 | `listDiaryEntries` | 按业务日期分页列出正式日记 | ✅ |
+| `renderDiaryEntries` | 同上查询，但带交互式卡片 UI（见下文） | ✅ |
 | `deleteDiaryEntry` | 永久删除正式日记（调用前需用户确认） | |
 
 状态机：`draft -> committed` 或 `draft -> discarded`。终态不可回到草稿。同一用户同一 `diary_date` 只能有一篇正式日记。
 
 日记数据以 JSON 形式持久化在每个工作区的 `.mcp-diary/diary.json`，写入走沙箱文件服务的原子替换，用户之间完全隔离。
+
+## 交互式界面（MCP Apps）
+
+支持 [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) 的宿主（ChatGPT Connectors、Claude、VS Code Copilot 等）会把部分工具的结果渲染成内嵌界面：
+
+- `renderDiaryEntries` → 卡片列表：日期、农历、天气、正文摘要，点击展开全文，支持翻页。
+- `getDiaryEntry` → 单篇阅读卡片。
+
+实现要点：
+
+- UI 是 `ui://mcp-diary/*.html` 资源（`text/html;profile=mcp-app`），完全自包含（内联 CSS/JS，无外部请求），随二进制 `go:embed`。
+- 工具通过 `_meta.ui.resourceUri`（以及 ChatGPT 兼容别名 `_meta["openai/outputTemplate"]`）关联界面；绑定逻辑在 `internal/transport/mcp/tools` 的注册表里，UI 声明集中在 `internal/transport/mcp/ui`。
+- **数据工具与渲染工具分离**：`listDiaryEntries` 等数据工具不带 UI，模型可以只读数据而不弹卡片；只有 `renderDiaryEntries` 负责展示。
+- 界面内的翻页/展开通过 MCP Apps 桥（`tools/call`）回调 `listDiaryEntries`，因此沿用调用方的 OAuth 身份，按用户隔离不变。
+- 不支持 UI 的客户端照常拿到结构化 JSON 与文本回退，行为与之前一致。
+
+人工自测：把服务暴露在公网 HTTPS（`--public-url`），在 ChatGPT 中添加连接器指向 `https://<host>/mcp`，然后问「看看我十月的日记」。
 
 ## 同步到 GitHub
 
@@ -312,3 +332,4 @@ func (t myTool) Handle(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToo
 ```
 
 2. 在该 group 的 `All(...)` 中返回新工具，`app.New` 会自动完成注册。
+3. 需要交互界面时，在 `internal/transport/mcp/ui/assets/` 新增 HTML，并在 `ui.Views()` 里声明 URI 与对应的工具名；注册表绑定时会自动加上 `_meta.ui.resourceUri`，无需改动工具实现。

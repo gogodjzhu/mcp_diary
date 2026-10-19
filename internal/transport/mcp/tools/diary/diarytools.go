@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// diaryTool is a single diary tool.
 type diaryTool struct {
 	name       string
 	definition mcp.Tool
@@ -39,6 +40,7 @@ func All(workspaces tools.WorkspaceProvider, svc *corediary.Service) []tools.Too
 		newUpdateDiaryEntry(workspaces, svc),
 		newListDiaryEntries(workspaces, svc),
 		newDeleteDiaryEntry(workspaces, svc),
+		newRenderDiaryEntries(workspaces, svc),
 	}
 }
 

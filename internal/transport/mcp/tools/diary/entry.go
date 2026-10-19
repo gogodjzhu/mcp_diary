@@ -13,7 +13,7 @@ func newGetDiaryEntry(workspaces tools.WorkspaceProvider, svc *corediary.Service
 		name: "getDiaryEntry",
 		definition: mcp.NewTool(
 			"getDiaryEntry",
-			mcp.WithDescription("Read a committed diary entry by entry_id."),
+			mcp.WithDescription("Read a committed diary entry by entry_id. Clients that render MCP Apps show it as a card."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithString("request_id", mcp.Required(), mcp.Description("Caller-generated idempotency key.")),
 			mcp.WithString("entry_id", mcp.Required(), mcp.Description("Committed entry id.")),

@@ -41,6 +41,9 @@ func New(cfg config.Config, workspaces *workspace.Manager, registry *tools.Regis
 		server.WithTitle(cfg.Name),
 		server.WithInstructions(instructions(workspaces)),
 		server.WithToolCapabilities(true),
+		// The interactive UI views are served as resources; subscribe is not
+		// needed because the views never change at runtime.
+		server.WithResourceCapabilities(false, false),
 		server.WithRecovery(),
 		server.WithLogging(),
 	)
@@ -76,17 +79,18 @@ func instructions(workspaces *workspace.Manager) string {
 		mode = "read-only"
 	}
 	diaryGuide := "Use the diary tools to record daily journals as plain text: createDiarySession, appendDiarySession, getDiarySession, updateDiarySession, then commitDiarySession only after the user confirms. Do not invent structured fields. After commit, use getDiaryEntry, listDiaryEntries, updateDiaryEntry, and deleteDiaryEntry. deleteDiaryEntry requires explicit user confirmation."
+	uiGuide := "When the user asks to see, browse or review their diary, call renderDiaryEntries to show the entries as an interactive list instead of pasting them as text. listDiaryEntries remains the data tool for reading entries the user did not ask to see."
 	if workspaces.PerUser() {
 		return fmt.Sprintf(
 			"You are connected to a private, authenticated diary workspace with %s access. "+
 				"The workspace belongs to the authenticated user and is fully isolated from other users. "+
-				"All diary data is stored inside it. %s",
-			mode, diaryGuide,
+				"All diary data is stored inside it. %s %s",
+			mode, diaryGuide, uiGuide,
 		)
 	}
 	return fmt.Sprintf(
 		"You are connected to a diary workspace rooted at %q with %s access. "+
-			"All diary data is stored inside this root. %s",
-		workspaces.Root(), mode, diaryGuide,
+			"All diary data is stored inside this root. %s %s",
+		workspaces.Root(), mode, diaryGuide, uiGuide,
 	)
 }

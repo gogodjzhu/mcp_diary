@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>日记</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --diary-bg: var(--color-background-secondary, Canvas);
+        --diary-card: var(--color-background-primary, Canvas);
+        --diary-text: var(--color-text-primary, CanvasText);
+        --diary-muted: var(--color-text-secondary, GrayText);
+        --diary-border: var(--color-border-secondary, rgba(128, 128, 128, 0.25));
+        --diary-accent: var(--color-text-info, #2563eb);
+        --diary-danger: var(--color-text-danger, #b42318);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--diary-text);
+        font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      .entry {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px 14px;
+        border: 1px solid var(--diary-border);
+        border-radius: 10px;
+        background: var(--diary-card);
+      }
+      .head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .date {
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .meta {
+        color: var(--diary-muted);
+        font-size: 12px;
+      }
+      .content {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .state {
+        color: var(--diary-muted);
+        padding: 16px 0;
+        text-align: center;
+      }
+      .error {
+        color: var(--diary-danger);
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="entry" id="entry" hidden>
+      <div class="head">
+        <span class="date" id="date"></span>
+        <span class="meta" id="meta"></span>
+      </div>
+      <div class="content" id="content"></div>
+    </main>
+    <div class="state" id="state" aria-live="polite">加载中…</div>
+    <script>
+      /* BRIDGE */
+    </script>
+    <script>
+      (function () {
+        "use strict";
+
+        var B = window.diaryBridge;
+        var root = document.getElementById("entry");
+        var date = document.getElementById("date");
+        var meta = document.getElementById("meta");
+        var content = document.getElementById("content");
+        var state = document.getElementById("state");
+
+        function setState(text, isError) {
+          state.textContent = text || "";
+          state.className = isError ? "state error" : "state";
+          state.hidden = !text;
+        }
+
+        function render(entry) {
+          if (!entry || !entry.entry_id) {
+            setState("没有找到这条日记。", true);
+            return;
+          }
+          date.textContent = B.formatDate(entry.diary_date);
+          var m = entry.meta || {};
+          var bits = [];
+          if (m.lunar) bits.push(m.lunar);
+          if (m.weather) bits.push(m.weather);
+          if (entry.revision) bits.push("v" + entry.revision);
+          meta.textContent = bits.join(" · ");
+          content.textContent = entry.content || "";
+          root.hidden = false;
+          setState("");
+        }
+
+        function load(entryID) {
+          setState("加载中…");
+          window.diary
+            .callTool("getDiaryEntry", { request_id: B.uuid(), entry_id: entryID })
+            .then(B.unwrap)
+            .then(render)
+            .catch(function (err) {
+              setState("加载失败：" + (err && err.message ? err.message : String(err)), true);
+            });
+        }
+
+        window.diary.onInput(function (input) {
+          var id = input && input.entry_id;
+          if (!id) return;
+          load(id);
+        });
+
+        window.diary.onResult(function (result) {
+          var payload = result && result.structuredContent !== undefined ? result.structuredContent : null;
+          if (payload && payload.code !== undefined) {
+            if (payload.code !== 0) {
+              setState("加载失败：" + (payload.message || "未知错误"), true);
+              return;
+            }
+            payload = payload.data;
+          }
+          if (payload && payload.entry_id) render(payload);
+        });
+      })();
+    </script>
+  </body>
+</html>

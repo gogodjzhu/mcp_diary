@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"strings"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
@@ -19,6 +21,7 @@ import (
 	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp"
 	"github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools"
 	diarytools "github.com/gogodjzhu/mcp-diary/internal/transport/mcp/tools/diary"
+	ui "github.com/gogodjzhu/mcp-diary/internal/transport/mcp/ui"
 )
 
 // App is a fully assembled server exposing both the MCP and the web access
@@ -50,7 +53,22 @@ func BuildRegistry(workspaces *workspace.Manager, diarySvc *diary.Service) (*too
 	}
 	registry := tools.NewRegistry()
 	registry.Add(diarytools.All(workspaces, diarySvc)...)
+	registry.AddViews(ui.Views()...)
 	return registry, nil
+}
+
+// uiViews lists the interactive UI (MCP Apps) views the server exposes.
+func uiViews() []ui.View { return ui.Views() }
+
+// serverOrigin derives the public origin (scheme://host) advertised to UI
+// hosts. The OAuth issuer wins because it is the externally reachable URL;
+// without authentication there is no public origin to advertise.
+func serverOrigin(cfg config.Config) string {
+	u, err := url.Parse(strings.TrimSpace(cfg.Auth.PublicURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // New builds the application: it opens the workspace root, optionally wires the
@@ -95,6 +113,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build tool registry: %w", err)
 	}
+	toolRegistry.SetOrigin(serverOrigin(cfg))
 
 	app := &App{
 		cfg:        cfg,

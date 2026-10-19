@@ -306,4 +306,45 @@ func TestDiaryMCPEndToEnd(t *testing.T) {
 	if deleted["data"].(map[string]any)["deleted"] != true {
 		t.Fatalf("delete = %v", deleted)
 	}
+
+	// The data tools stay clean; renderDiaryEntries is the UI variant.
+	toolsList, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, tool := range toolsList.Tools {
+		seen[tool.Name] = true
+		switch tool.Name {
+		case "renderDiaryEntries":
+			if tool.Meta == nil || tool.Meta.AdditionalFields["ui"] == nil {
+				t.Fatalf("renderDiaryEntries has no ui metadata")
+			}
+		case "listDiaryEntries":
+			if tool.Meta != nil {
+				t.Fatalf("listDiaryEntries must stay UI-free, got %+v", tool.Meta)
+			}
+		}
+	}
+	if !seen["renderDiaryEntries"] {
+		t.Fatal("renderDiaryEntries not listed")
+	}
+
+	rendered := envelopeOf(t, callTool(t, ctx, c, "renderDiaryEntries", map[string]any{
+		"request_id": "req_007",
+	}))
+	if rendered["code"].(float64) != 0 {
+		t.Fatalf("renderDiaryEntries failed: %v", rendered)
+	}
+	if _, ok := rendered["data"].(map[string]any)["entries"]; !ok {
+		t.Fatalf("renderDiaryEntries payload = %v", rendered["data"])
+	}
+
+	uiRes, err := c.ReadResource(ctx, mcp.ReadResourceRequest{Params: mcp.ReadResourceParams{URI: "ui://mcp-diary/entries.html"}})
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if len(uiRes.Contents) != 1 || !strings.Contains(uiRes.Contents[0].(mcp.TextResourceContents).Text, "window.diary") {
+		t.Fatalf("unexpected UI resource contents: %+v", uiRes.Contents)
+	}
 }
