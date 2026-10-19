@@ -56,6 +56,9 @@ func TestMergeMonthPreservesUnownedRemoteDays(t *testing.T) {
 	if !strings.Contains(string(got), "new local day") || !strings.Contains(string(got), "2026-10-04") {
 		t.Fatalf("new local day missing:\n%s", got)
 	}
+	if strings.Index(string(got), "2026-10-04") > strings.Index(string(got), "2026-10-01") {
+		t.Fatalf("days not descending:\n%s", got)
+	}
 }
 
 func TestMergeMonthReplacesOnlyManagedDays(t *testing.T) {
@@ -81,6 +84,7 @@ func TestMergeMonthReplacesOnlyManagedDays(t *testing.T) {
 	if !strings.Contains(body, "brand new") {
 		t.Fatalf("new local day missing:\n%s", body)
 	}
+	assertDayOrder(t, body, "2026-10-03", "2026-10-02", "2026-10-01")
 }
 
 func TestMergeMonthDropsManagedDayWhenDeletedLocally(t *testing.T) {
@@ -155,6 +159,7 @@ func TestMergeMonthUnmanagedAdjacentDaysStayStable(t *testing.T) {
 			daySeparator + "\n\n2026-10-02，五\n\nsecond\n\n" +
 			daySeparator + "\n\n2026-10-01，四\n\nfirst\n",
 	)
+	// Already descending: an unmanaged-only month must stay byte-identical.
 	first, changed := MergeMonth(remote, nil, "2026-10", nil)
 	if changed {
 		t.Fatalf("canonical unmanaged days should not change on first merge, got:\n%s", first)
@@ -178,7 +183,7 @@ func TestMergeMonthParsesLegacyHeading(t *testing.T) {
 		{EntryID: "de_2", DiaryDate: "2026-10-02", Content: "added", Revision: 1},
 	}
 	// 10-01 is pre-existing (unmanaged) so the legacy block is kept; 10-02 is
-	// appended.
+	// inserted above it because blocks are ordered newest first.
 	got, _ := MergeMonth(remote, entries, "2026-10", nil)
 	body := string(got)
 	if strings.Count(body, "2026-10-01") != 1 {
@@ -186,6 +191,97 @@ func TestMergeMonthParsesLegacyHeading(t *testing.T) {
 	}
 	if !strings.Contains(body, "legacy day") || !strings.Contains(body, "added") {
 		t.Fatalf("merge result wrong:\n%s", body)
+	}
+	assertDayOrder(t, body, "2026-10-02", "2026-10-01")
+}
+
+func TestMergeMonthInsertsBackfilledDayInOrder(t *testing.T) {
+	remote := []byte(
+		daySeparator + "\n\n2026-10-05，一\n\nfifth\n\n" +
+			daySeparator + "\n\n2026-10-01，四\n\nfirst\n",
+	)
+	entries := []diary.Entry{
+		{EntryID: "de_1", DiaryDate: "2026-10-01", Content: "first", Revision: 1},
+		{EntryID: "de_2", DiaryDate: "2026-10-05", Content: "fifth", Revision: 1},
+		{EntryID: "de_3", DiaryDate: "2026-10-03", Content: "backfilled", Revision: 1},
+	}
+	got, changed := MergeMonth(remote, entries, "2026-10", nil)
+	if !changed {
+		t.Fatal("expected change")
+	}
+	body := string(got)
+	if !strings.Contains(body, "backfilled") {
+		t.Fatalf("backfilled day missing:\n%s", body)
+	}
+	assertDayOrder(t, body, "2026-10-05", "2026-10-03", "2026-10-01")
+
+	// A second merge over the result must be a no-op so the engine does not
+	// push the same body again.
+	again, changed := MergeMonth(got, entries, "2026-10", nil)
+	if changed || string(again) != body {
+		t.Fatalf("merge not idempotent, changed=%v:\n%s", changed, again)
+	}
+}
+
+func TestMergeMonthForcesDescendingOnAscendingRemote(t *testing.T) {
+	remote := []byte(
+		daySeparator + "\n\n2026-10-01，四\n\nfirst\n\n" +
+			daySeparator + "\n\n2026-10-02，五\n\nsecond\n\n" +
+			daySeparator + "\n\n2026-10-03，六\n\nthird\n",
+	)
+	got, changed := MergeMonth(remote, nil, "2026-10", nil)
+	if !changed {
+		t.Fatal("ascending remote should be reordered")
+	}
+	body := string(got)
+	for _, content := range []string{"first", "second", "third"} {
+		if !strings.Contains(body, content) {
+			t.Fatalf("remote day %q lost:\n%s", content, body)
+		}
+	}
+	assertDayOrder(t, body, "2026-10-03", "2026-10-02", "2026-10-01")
+
+	again, changed := MergeMonth(got, nil, "2026-10", nil)
+	if changed || string(again) != body {
+		t.Fatalf("reordered body not stable, changed=%v:\n%s", changed, again)
+	}
+}
+
+func TestMergeMonthReordersWithPreamble(t *testing.T) {
+	remote := []byte("# keep me\n\n" +
+		daySeparator + "\n\n2026-10-01，四\n\nfirst\n\n" +
+		daySeparator + "\n\n2026-10-02，五\n\nsecond\n")
+	got, _ := MergeMonth(remote, nil, "2026-10", nil)
+	body := string(got)
+	if !strings.HasPrefix(body, "# keep me\n\n") {
+		t.Fatalf("preamble not kept at top:\n%s", body)
+	}
+	if strings.Count(body, "# keep me") != 1 {
+		t.Fatalf("preamble duplicated:\n%s", body)
+	}
+	assertDayOrder(t, body, "2026-10-02", "2026-10-01")
+}
+
+// assertDayOrder checks that the given dates appear as day headers in the
+// expected top-to-bottom order.
+func assertDayOrder(t *testing.T, body string, dates ...string) {
+	t.Helper()
+	indexOf := func(date string) int {
+		if idx := strings.Index(body, daySeparator+"\n\n"+date); idx >= 0 {
+			return idx
+		}
+		return strings.Index(body, "## "+date)
+	}
+	prev := -1
+	for _, date := range dates {
+		idx := indexOf(date)
+		if idx < 0 {
+			t.Fatalf("day %s missing:\n%s", date, body)
+		}
+		if idx < prev {
+			t.Fatalf("days not in expected order %v:\n%s", dates, body)
+		}
+		prev = idx
 	}
 }
 

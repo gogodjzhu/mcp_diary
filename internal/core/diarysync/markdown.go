@@ -201,8 +201,13 @@ func ParseMonth(body []byte) (preamble string, blocks []dayBlock) {
 // The medium only ever replaces or removes day blocks whose dates are listed
 // in managed (the dates it wrote last time). Every other block is treated as
 // pre-existing remote content and preserved byte-for-byte. Local days that do
-// not exist remotely are appended. Remote preamble (bytes before the first
-// day block) is preserved as-is, is not rewritten, and is emitted once.
+// not exist remotely are inserted at their date position. Remote preamble
+// (bytes before the first day block) is preserved as-is, is not rewritten, and
+// is emitted once.
+//
+// The merged day blocks are always emitted in descending date order, so a
+// backfilled day lands at its rightful place instead of at the end of the file.
+// Unmanaged blocks keep their bytes; only their position may change.
 //
 // It returns the merged body plus whether it differs from remote. A nil body
 // with changed=true means nothing remains in the file and it should be
@@ -236,27 +241,28 @@ func MergeMonth(remote []byte, entries []diary.Entry, month string, managed []st
 	}
 
 	remoteDates := make(map[string]struct{}, len(blocks))
-	var out []string
+	drafts := make([]dayDraft, 0, len(blocks)+len(local))
 	for _, b := range blocks {
 		remoteDates[b.date] = struct{}{}
 		if _, isManaged := managedSet[b.date]; isManaged {
 			if e, ok := localByDate[b.date]; ok {
-				out = append(out, renderDayBlock(e))
+				drafts = append(drafts, dayDraft{date: b.date, raw: renderDayBlock(e)})
 			}
 			// Managed but no longer local: drop it.
 			continue
 		}
-		out = append(out, strings.TrimRight(b.raw, "\n")+"\n")
+		drafts = append(drafts, dayDraft{date: b.date, raw: strings.TrimRight(b.raw, "\n") + "\n"})
 	}
 	for _, e := range local {
 		if _, ok := remoteDates[e.DiaryDate]; ok {
 			continue
 		}
-		out = append(out, renderDayBlock(e))
+		drafts = append(drafts, dayDraft{date: e.DiaryDate, raw: renderDayBlock(e)})
 	}
-	if len(out) == 0 {
+	if len(drafts) == 0 {
 		return nil, true
 	}
+	out := sortDaysDescending(drafts)
 	merged := []byte(strings.Join(out, "\n"))
 	if !strings.HasSuffix(string(merged), "\n") {
 		merged = append(merged, '\n')
@@ -270,16 +276,37 @@ func MergeMonth(remote []byte, entries []diary.Entry, month string, managed []st
 	return merged, true
 }
 
+// dayDraft is a rendered day block waiting to be ordered by date.
+type dayDraft struct {
+	date string
+	raw  string
+}
+
+// sortDaysDescending returns the block bodies ordered newest first. The sort is
+// stable so blocks sharing a date keep their relative order.
+func sortDaysDescending(drafts []dayDraft) []string {
+	sort.SliceStable(drafts, func(i, j int) bool {
+		return drafts[i].date > drafts[j].date
+	})
+	out := make([]string, 0, len(drafts))
+	for _, d := range drafts {
+		out = append(out, d.raw)
+	}
+	return out
+}
+
+// appendDays is the fallback for remote content we cannot split into day
+// blocks: the original bytes are kept untouched and the local days follow in
+// descending date order.
 func appendDays(remote []byte, days []diary.Entry) []byte {
+	drafts := make([]dayDraft, 0, len(days))
+	for _, e := range days {
+		drafts = append(drafts, dayDraft{date: e.DiaryDate, raw: renderDayBlock(e)})
+	}
 	var b strings.Builder
 	b.Write(bytes.TrimRight(remote, "\r\n"))
 	b.WriteString("\n\n")
-	for i, e := range days {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(renderDayBlock(e))
-	}
+	b.WriteString(strings.Join(sortDaysDescending(drafts), "\n"))
 	return []byte(b.String())
 }
 

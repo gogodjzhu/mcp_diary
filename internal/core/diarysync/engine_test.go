@@ -251,6 +251,9 @@ func TestEnginePreservesPreexistingRemoteOnFirstSync(t *testing.T) {
 	if !strings.Contains(body, "new local day") {
 		t.Fatalf("new local day not synced:\n%s", body)
 	}
+	if strings.Index(body, "old remote day") < strings.Index(body, "new local day") {
+		t.Fatalf("days not descending:\n%s", body)
+	}
 
 	// A later local change to the same month must still preserve the
 	// pre-existing remote day.
@@ -264,6 +267,67 @@ func TestEnginePreservesPreexistingRemoteOnFirstSync(t *testing.T) {
 	}
 	if !strings.Contains(body, "new local day") || !strings.Contains(body, "another local day") {
 		t.Fatalf("local days missing after later sync:\n%s", body)
+	}
+	if strings.Index(body, "another local day") > strings.Index(body, "new local day") {
+		t.Fatalf("days not descending:\n%s", body)
+	}
+}
+
+func TestEngineBackfillsDayIntoDatePosition(t *testing.T) {
+	engine, syncSvc, diarySvc, fs, mem := testEngine(t)
+	upsertGitHub(t, syncSvc, fs)
+	ctx := context.Background()
+
+	commitDate(t, diarySvc, fs, "2026-10-01", "first day", "bf1")
+	commitDate(t, diarySvc, fs, "2026-10-05", "last day", "bf2")
+	if err := engine.TriggerFull(ctx, fs); err != nil {
+		t.Fatalf("TriggerFull: %v", err)
+	}
+
+	// Backfill a day between two already synced days.
+	commitDate(t, diarySvc, fs, "2026-10-03", "backfilled day", "bf3")
+	if err := engine.SyncNow(ctx, fs, "2026-10-03"); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	body := string(mem.Body("2026/2026-10.md"))
+	first := strings.Index(body, "first day")
+	backfilled := strings.Index(body, "backfilled day")
+	last := strings.Index(body, "last day")
+	if first < 0 || backfilled < 0 || last < 0 {
+		t.Fatalf("missing days:\n%s", body)
+	}
+	if !(last < backfilled && backfilled < first) {
+		t.Fatalf("backfilled day not in date position:\n%s", body)
+	}
+
+	// A full resync of an already ordered file must not push again.
+	counting := &countingProvider{inner: mem}
+	syncSvc.registry.Register(KindGitHub, fixedFactory(counting))
+	if err := engine.TriggerFull(ctx, fs); err != nil {
+		t.Fatalf("second TriggerFull: %v", err)
+	}
+	if counting.pushes != 0 {
+		t.Fatalf("ordered month re-pushed %d times", counting.pushes)
+	}
+}
+
+func TestEngineReordersAscendingRemoteMonth(t *testing.T) {
+	engine, syncSvc, diarySvc, fs, mem := testEngine(t)
+	upsertGitHub(t, syncSvc, fs)
+	ctx := context.Background()
+
+	remote := []byte(daySeparator + "\n\n2026-10-01，四\n\nfirst\n\n" +
+		daySeparator + "\n\n2026-10-02，五\n\nsecond\n")
+	if _, err := mem.Push(ctx, Document{Kind: DocumentText, Path: "2026/2026-10.md", Body: remote}); err != nil {
+		t.Fatal(err)
+	}
+	commitDate(t, diarySvc, fs, "2026-10-02", "local second", "ro1")
+	if err := engine.TriggerFull(ctx, fs); err != nil {
+		t.Fatalf("TriggerFull: %v", err)
+	}
+	body := string(mem.Body("2026/2026-10.md"))
+	if strings.Index(body, "2026-10-01") < strings.Index(body, "2026-10-02") {
+		t.Fatalf("remote month not reordered descending:\n%s", body)
 	}
 }
 
