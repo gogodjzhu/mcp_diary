@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 )
@@ -232,4 +233,58 @@ func TestEnricherLeavesWeatherEmptyWhenAllAttemptsFail(t *testing.T) {
 	if doer.weather != Attempts*2 {
 		t.Fatalf("weather attempts = %d, want %d", doer.weather, Attempts*2)
 	}
+}
+
+// orderDoer records the endpoint paths in call order.
+type orderDoer struct {
+	fakeDoer
+	paths []string
+}
+
+func (o *orderDoer) Do(req *http.Request) (*http.Response, error) {
+	o.paths = append(o.paths, req.URL.Path)
+	return o.fakeDoer.Do(req)
+}
+
+func TestWeatherClientAsksArchiveBeforeForecast(t *testing.T) {
+	doer := &orderDoer{}
+	client := NewWeatherClient(doer)
+	// Today's date: both endpoints could answer, but the archive one is tried
+	// first because it is the one reachable from the production network.
+	today := time.Now().Format("2006-01-02")
+	if _, err := client.Weather(context.Background(), "Beijing", today); err != nil {
+		t.Fatalf("Weather: %v", err)
+	}
+	if len(doer.paths) != 2 {
+		t.Fatalf("paths = %v, want a geocode call and one weather call", doer.paths)
+	}
+	if doer.paths[0] != "/v1/search" || doer.paths[1] != "/v1/archive" {
+		t.Fatalf("paths = %v, want /v1/search then /v1/archive", doer.paths)
+	}
+}
+
+func TestWeatherClientFallsBackToForecastWhenArchiveFails(t *testing.T) {
+	doer := &archiveDownDoer{}
+	client := NewWeatherClient(doer)
+	today := time.Now().Format("2006-01-02")
+	got, err := client.Weather(context.Background(), "Beijing", today)
+	if err != nil {
+		t.Fatalf("Weather: %v", err)
+	}
+	if got.Code != 61 {
+		t.Fatalf("weather = %+v, want the forecast fallback", got)
+	}
+	if len(doer.paths) != 3 || doer.paths[2] != "/v1/forecast" {
+		t.Fatalf("paths = %v, want search, archive, forecast", doer.paths)
+	}
+}
+
+type archiveDownDoer struct{ orderDoer }
+
+func (a *archiveDownDoer) Do(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == "/v1/archive" {
+		a.paths = append(a.paths, req.URL.Path)
+		return nil, errors.New("archive unavailable")
+	}
+	return a.orderDoer.Do(req)
 }

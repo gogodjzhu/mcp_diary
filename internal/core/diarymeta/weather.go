@@ -132,14 +132,20 @@ func (c *WeatherClient) codeForDate(ctx context.Context, lat, lon float64, date 
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	// The forecast endpoint covers roughly the last three months and the near
-	// future; the archive endpoint covers everything older.
-	if c.recent(date) {
-		if code, err := c.query(ctx, forecastURL, lat, lon, date); err == nil {
-			return code, nil
-		}
+	// Ask the archive endpoint first. It answers for any past date, including
+	// today, which is all a diary ever needs. The forecast endpoint is only a
+	// fallback for a day the archive does not cover yet; it is tried second
+	// because it is a different host that is not reachable everywhere, and a
+	// hanging first call would otherwise spend the whole lookup budget before
+	// the working endpoint is ever contacted.
+	code, err := c.query(ctx, archiveURL, lat, lon, date)
+	if err == nil {
+		return code, nil
 	}
-	return c.query(ctx, archiveURL, lat, lon, date)
+	if !c.recent(date) {
+		return 0, err
+	}
+	return c.query(ctx, forecastURL, lat, lon, date)
 }
 
 func (c *WeatherClient) recent(date string) bool {
