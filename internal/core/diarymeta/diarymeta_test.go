@@ -2,6 +2,7 @@ package diarymeta
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -55,13 +56,12 @@ type fakeDoer struct {
 }
 
 func (f *fakeDoer) Do(req *http.Request) (*http.Response, error) {
-	host := req.URL.Host
 	var body string
-	switch {
-	case strings.Contains(host, "geocoding"):
+	switch req.URL.Path {
+	case "/v1/search":
 		f.geocoding++
 		body = `{"results":[{"latitude":39.9,"longitude":116.4}]}`
-	case strings.Contains(host, "forecast") || strings.Contains(host, "archive"):
+	case "/v1/forecast", "/v1/archive":
 		f.weather++
 		body = `{"daily":{"weather_code":[61]}}`
 	default:
@@ -146,5 +146,90 @@ func TestEnricherUsesSettings(t *testing.T) {
 	meta = enricher.Enrich(ctx, fs, "2026-09-30")
 	if meta.Lunar != "八月二十" {
 		t.Fatalf("lunar = %q", meta.Lunar)
+	}
+}
+
+// flakyDoer fails the first failWeather weather requests, then succeeds.
+type flakyDoer struct {
+	fakeDoer
+	failWeather int
+}
+
+func (f *flakyDoer) Do(req *http.Request) (*http.Response, error) {
+	isWeather := req.URL.Path == "/v1/forecast" || req.URL.Path == "/v1/archive"
+	if isWeather && f.failWeather > 0 {
+		f.failWeather--
+		f.weather++
+		return nil, errors.New("temporary network failure")
+	}
+	return f.fakeDoer.Do(req)
+}
+
+func TestWeatherClientCachesResultPerDate(t *testing.T) {
+	doer := &fakeDoer{}
+	client := NewWeatherClient(doer)
+	for i := 0; i < 3; i++ {
+		if _, err := client.Weather(context.Background(), "Beijing", "2000-01-15"); err != nil {
+			t.Fatalf("Weather: %v", err)
+		}
+	}
+	// Geocoding once, weather once; repeat lookups come from the result cache.
+	if doer.geocoding != 1 || doer.weather != 1 {
+		t.Fatalf("calls = geocoding %d weather %d, want 1 and 1", doer.geocoding, doer.weather)
+	}
+	// A different date is a different lookup.
+	if _, err := client.Weather(context.Background(), "Beijing", "2000-01-16"); err != nil {
+		t.Fatalf("other date: %v", err)
+	}
+	if doer.weather != 2 {
+		t.Fatalf("weather calls = %d, want 2", doer.weather)
+	}
+}
+
+func TestEnricherRetriesTransientWeatherFailure(t *testing.T) {
+	settings := New()
+	fs := testFS(t)
+	ctx := context.Background()
+	if _, err := settings.Save(ctx, fs, Settings{WeatherEnabled: true, WeatherLocation: "Beijing"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two failures is one whole attempt: the recent date tries the forecast
+	// endpoint, then falls back to the archive endpoint. The retry then wins.
+	doer := &flakyDoer{failWeather: 2}
+	enricher := NewEnricher(settings, NewWeatherClient(doer), nil)
+	meta := enricher.Enrich(ctx, fs, "2026-09-30")
+	if meta.Weather != "🌧️" || meta.WeatherCode != 61 {
+		t.Fatalf("weather = %q code=%d, want the retried result", meta.Weather, meta.WeatherCode)
+	}
+	if meta.Source != "open-meteo" || meta.Location != "Beijing" {
+		t.Fatalf("meta = %+v", meta)
+	}
+	if doer.weather != 3 {
+		t.Fatalf("weather attempts = %d, want 2 failures then 1 success", doer.weather)
+	}
+}
+
+func TestEnricherLeavesWeatherEmptyWhenAllAttemptsFail(t *testing.T) {
+	settings := New()
+	fs := testFS(t)
+	ctx := context.Background()
+	if _, err := settings.Save(ctx, fs, Settings{LunarEnabled: true, WeatherEnabled: true, WeatherLocation: "Beijing"}); err != nil {
+		t.Fatal(err)
+	}
+
+	doer := &flakyDoer{failWeather: 100}
+	enricher := NewEnricher(settings, NewWeatherClient(doer), nil)
+	meta := enricher.Enrich(ctx, fs, "2026-09-30")
+
+	if meta.Weather != "" || meta.WeatherCode != 0 {
+		t.Fatalf("weather should stay empty, got %+v", meta)
+	}
+	// The write still carries what it can derive locally.
+	if meta.Lunar != "八月二十" || meta.Weekday != "三" {
+		t.Fatalf("meta = %+v, want lunar and weekday", meta)
+	}
+	if doer.weather != Attempts*2 {
+		t.Fatalf("weather attempts = %d, want %d", doer.weather, Attempts*2)
 	}
 }

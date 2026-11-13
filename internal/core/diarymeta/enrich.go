@@ -49,17 +49,32 @@ func (e *Enricher) Enrich(ctx context.Context, fs *filesystem.Service, date stri
 			e.logger.Warn("weather metadata enabled without a location")
 			return meta
 		}
-		wctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		defer cancel()
-		if w, err := e.weather.Weather(wctx, location, date); err == nil {
+		if w, ok := e.fetchWeather(ctx, location, date); ok {
 			meta.Weather = w.Emoji
 			meta.WeatherCode = w.Code
 			meta.Location = location
 			meta.Source = "open-meteo"
 			meta.FetchedAt = e.now().UTC()
-		} else {
-			e.logger.Warn("fetch weather metadata", "location", location, "date", date, "err", err)
 		}
 	}
 	return meta
+}
+
+// fetchWeather retries a transient Open-Meteo failure. Each attempt gets its
+// own deadline, so one slow attempt cannot eat the next one's budget. A lookup
+// that still fails leaves the weather field empty; it never fails the write.
+func (e *Enricher) fetchWeather(ctx context.Context, location, date string) (Weather, bool) {
+	for attempt := 1; attempt <= Attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return Weather{}, false
+		}
+		wctx, cancel := context.WithTimeout(ctx, AttemptTimeout)
+		w, err := e.weather.Weather(wctx, location, date)
+		cancel()
+		if err == nil {
+			return w, true
+		}
+		e.logger.Warn("fetch weather metadata", "location", location, "date", date, "attempt", attempt, "err", err)
+	}
+	return Weather{}, false
 }
