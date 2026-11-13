@@ -38,7 +38,7 @@ func TestValidateTokenReadsProfileAndEmail(t *testing.T) {
 	if !sawUserAgent {
 		t.Error("requests must carry a user agent; Gitee rejects those without one")
 	}
-	if info.ID != "42" || info.Email != "alice@gitee.com" || !info.EmailVerified || info.Name != "Alice" {
+	if info.ID != "gitee:42" || info.Email != "alice@gitee.com" || !info.EmailVerified || info.Name != "Alice" {
 		t.Fatalf("info = %+v", info)
 	}
 }
@@ -58,7 +58,7 @@ func TestValidateTokenToleratesMissingEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.ID != "7" || info.Email != "" || info.Name != "bob" {
+	if info.ID != "gitee:7" || info.Email != "" || info.Name != "bob" {
 		t.Fatalf("info = %+v", info)
 	}
 }

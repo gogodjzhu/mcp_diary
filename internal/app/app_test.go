@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -164,6 +165,33 @@ func TestAppWiresSyncEngineForManualTrigger(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = application.Close() })
 
+	// Upsert probes the token before saving, and Trigger probes again before
+	// the engine pushes. Point both at a local stand-in so the wiring test
+	// never calls api.github.com.
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			http.Error(w, "no token", http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.URL.Path == "/user" || r.URL.Path == "/repos/test_diary/test_diary" || r.URL.Path == "/repos/test_diary/test_diary/branches/main":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
+			http.Error(w, "missing", http.StatusNotFound)
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/contents/"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"content":{"sha":"newsha"},"commit":{"sha":"commitsha"}}`))
+		default:
+			http.Error(w, r.Method+" "+r.URL.Path, http.StatusTeapot)
+		}
+	}))
+	t.Cleanup(github.Close)
+	application.Sync().Registry().Register(
+		diarysync.KindGitHub,
+		diarysync.GitHubFactoryAt(github.URL, nil, github.Client()),
+	)
+
 	ctx := context.Background()
 	fs, err := application.Workspaces().Filesystem(ctx)
 	if err != nil {
@@ -173,7 +201,11 @@ func TestAppWiresSyncEngineForManualTrigger(t *testing.T) {
 		Kind:       diarysync.KindGitHub,
 		Name:       "github",
 		Credential: "ghp_test",
-		Settings:   map[string]string{"owner": "test_diary", "repo": "test_diary"},
+		Settings: map[string]string{
+			"owner":             "test_diary",
+			"repo":              "test_diary",
+			"preserve_existing": "false",
+		},
 	})
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
