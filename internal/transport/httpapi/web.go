@@ -10,10 +10,18 @@ import (
 	"strings"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/user"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/verify"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diarymeta"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
+
+// Linker starts an account-linking flow. The authorization server implements
+// it; the interface keeps this package from importing it.
+type Linker interface {
+	StartLink(id user.ID, provider string) (string, error)
+}
 
 // Config configures the web access layer.
 type Config struct {
@@ -21,6 +29,9 @@ type Config struct {
 	Workspaces *workspace.Manager
 	Sync       *diarysync.Service
 	Meta       *diarymeta.Service
+	Users      *user.Store
+	Verifier   *verify.Service
+	Linker     Linker
 }
 
 // Handler is the REST API handler. It is mounted under the "/api/" prefix and
@@ -49,7 +60,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 			return
 		}
-		h.handleMe(w, id)
+		h.handleMe(w, r, id)
+	case path == "/api/account":
+		h.handleDeleteAccount(w, r)
+	case strings.HasPrefix(path, "/api/account/"):
+		h.handleAccount(w, r, strings.TrimPrefix(path, "/api/account/"))
 	case path == "/api/settings":
 		h.handleSettings(w, r)
 	case path == "/api/sync/media":

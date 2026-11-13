@@ -1,9 +1,20 @@
+export interface LinkedIdentity {
+  provider: string
+  email?: string
+  name?: string
+  linked_at: string
+}
+
 export interface Me {
+  user_id: string
   subject: string
   email: string
   name: string
   username: string
   scopes: string[]
+  identities?: LinkedIdentity[]
+  has_password?: boolean
+  email_verified?: boolean
 }
 
 export interface DocumentState {
@@ -157,6 +168,12 @@ async function apiSend<T>(
 }
 
 export const getMe = (token: string): Promise<Me> => apiGet<Me>(token, '/api/me')
+
+export const startLink = (token: string, provider: string): Promise<{ url: string }> =>
+  apiSend<{ url: string }>(token, 'POST', '/api/account/identities/link', { provider })
+
+export const unlinkIdentity = (token: string, provider: string): Promise<void> =>
+  apiSend<void>(token, 'DELETE', '/api/account/identities/' + provider)
 
 export const listMedia = (token: string): Promise<{ media: Medium[] }> =>
   apiGet<{ media: Medium[] }>(token, '/api/sync/media')

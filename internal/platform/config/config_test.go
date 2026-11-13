@@ -16,6 +16,7 @@ func enableAuth(c *Config) {
 	c.Auth.PublicURL = "https://mcp.test"
 	c.Auth.GoogleClientID = "google-client"
 	c.Auth.GoogleClientSecret = "google-secret"
+	c.Auth.EmailEnabled = false
 }
 
 func TestAuthValidation(t *testing.T) {
@@ -32,20 +33,29 @@ func TestAuthValidation(t *testing.T) {
 			wantErr: "public URL",
 		},
 		{
-			name: "enabled without google client id",
-			mutate: func(c *Config) {
-				enableAuth(c)
-				c.Auth.GoogleClientID = ""
-			},
-			wantErr: "google client id",
-		},
-		{
-			name: "enabled without google secret",
+			name: "google id without secret",
 			mutate: func(c *Config) {
 				enableAuth(c)
 				c.Auth.GoogleClientSecret = ""
 			},
-			wantErr: "google client secret",
+			wantErr: "google client id and secret",
+		},
+		{
+			name: "no provider at all",
+			mutate: func(c *Config) {
+				enableAuth(c)
+				c.Auth.GoogleClientID = ""
+				c.Auth.GoogleClientSecret = ""
+			},
+			wantErr: "at least one auth provider",
+		},
+		{
+			name: "email without smtp",
+			mutate: func(c *Config) {
+				enableAuth(c)
+				c.Auth.EmailEnabled = true
+			},
+			wantErr: "smtp",
 		},
 		{
 			name: "enabled with stdio",

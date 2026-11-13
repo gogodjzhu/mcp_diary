@@ -19,11 +19,14 @@ func (a *App) HTTPHandler() http.Handler {
 		a.oauth.RegisterRoutes(mux, a.cfg.EndpointPath)
 	}
 
-	mux.Handle(a.cfg.EndpointPath, a.protect(a.mcp.StreamableHandler()))
+	mux.Handle(a.cfg.EndpointPath, a.protect(a.gate(a.mcp.StreamableHandler())))
 	mux.HandleFunc("/healthz", a.handleHealthz)
 
 	if a.web != nil {
-		mux.Handle("/api/", a.protect(a.web))
+		mux.Handle("/api/me", a.protect(a.web))
+		mux.Handle("/api/account", a.protect(a.web))
+		mux.Handle("/api/account/", a.protect(a.web))
+		mux.Handle("/api/", a.protect(a.gate(a.web)))
 		mux.Handle("/", webui.Handler(a.cfg.Web.StaticDir))
 	}
 
@@ -36,6 +39,16 @@ func (a *App) protect(next http.Handler) http.Handler {
 		return next
 	}
 	return a.oauth.Protect(next)
+}
+
+// gate blocks business endpoints until the user confirms an email address.
+// Account endpoints are deliberately not gated: they are how the user
+// completes the confirmation.
+func (a *App) gate(next http.Handler) http.Handler {
+	if a.oauth == nil {
+		return next
+	}
+	return a.oauth.Gate(next)
 }
 
 func (a *App) handleHealthz(w http.ResponseWriter, _ *http.Request) {

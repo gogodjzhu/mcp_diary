@@ -1,6 +1,7 @@
 # Build artifacts
 /bin/
 __debug_*
+node_modules
 
 # Frontend dependencies (the built assets in internal/webui/dist are committed
 # so that `go build` works without Node).

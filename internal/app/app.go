@@ -11,7 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gogodjzhu/mcp-diary/internal/auth/mail"
 	"github.com/gogodjzhu/mcp-diary/internal/auth/oauth"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/user"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/verify"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diary"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diarymeta"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
@@ -127,8 +130,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	}
 
 	if cfg.Auth.Enabled {
-		storePath := filepath.Join(resolveDir(cfg.Root, cfg.Auth.StoreDir), "oauth.json")
-		oauthSrv, err := oauth.New(cfg.Auth, cfg.EndpointPath, storePath, logger)
+		oauthSrv, err := newOAuth(cfg, logger)
 		if err != nil {
 			return nil, fmt.Errorf("configure authorization server: %w", err)
 		}
@@ -142,6 +144,9 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 			Workspaces: workspaces,
 			Sync:       syncSvc,
 			Meta:       metaSvc,
+			Users:      app.oauth.Users(),
+			Verifier:   app.oauth.Verifier(),
+			Linker:     app.oauth.Login(),
 		})
 	case cfg.Web.Enabled:
 		logger.Warn("web UI is enabled but authentication is disabled; web routes are not registered")
@@ -199,6 +204,57 @@ func (a *App) Diary() *diary.Service { return a.diary }
 
 // AuthEnabled reports whether OAuth authentication is active.
 func (a *App) AuthEnabled() bool { return a.cfg.Auth.Enabled }
+
+// newOAuth opens the user store and, when email login is enabled, the mail
+// sender, then assembles the authorization server.
+func newOAuth(cfg config.Config, logger *slog.Logger) (*oauth.OAuth, error) {
+	storeDir := resolveDir(cfg.Root, cfg.Auth.StoreDir)
+
+	secret, err := userStoreSecret(cfg.Auth.EncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	users, err := user.Open(filepath.Join(storeDir, cfg.Auth.UsersFile), secret)
+	if err != nil {
+		return nil, fmt.Errorf("open user store: %w", err)
+	}
+
+	deps := oauth.Dependencies{Users: users}
+	if cfg.Auth.EmailEnabled {
+		sender, err := mail.New(mailConfig(cfg.Auth.SMTP))
+		if err != nil {
+			return nil, fmt.Errorf("configure mail sender: %w", err)
+		}
+		deps.Verifier = verify.New(users, sender, logger)
+	}
+
+	storePath := filepath.Join(storeDir, "oauth.json")
+	return oauth.New(cfg.Auth, cfg.EndpointPath, storePath, logger, deps)
+}
+
+// userStoreSecret derives the key that seals verification codes. The auth
+// encryption key is reused so operators do not have to manage a second secret;
+// deployments without one get a derived constant, which is fine only because
+// those deployments already store OAuth state unencrypted.
+func mailConfig(s config.SMTPConfig) mail.Config {
+	return mail.Config{
+		Host:     s.Host,
+		Port:     s.Port,
+		TLSMode:  s.TLSMode,
+		Username: s.Username,
+		Password: s.Password,
+		From:     s.From,
+		FromName: s.FromName,
+		Timeout:  s.Timeout,
+	}
+}
+
+func userStoreSecret(encryptionKey string) ([]byte, error) {
+	if strings.TrimSpace(encryptionKey) == "" {
+		return []byte("mcp-diary-dev-user-store-secret"), nil
+	}
+	return []byte(encryptionKey), nil
+}
 
 func resolveDir(root, dir string) string {
 	if dir == "" {

@@ -77,11 +77,25 @@ type WebConfig struct {
 	StaticDir string
 }
 
+// SMTPConfig describes the SMTP submission endpoint used to deliver
+// verification codes. It mirrors the mail sender's configuration without
+// importing it: platform must not depend on auth.
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	TLSMode  string
+	Username string
+	Password string
+	From     string
+	FromName string
+	Timeout  time.Duration
+}
+
 // AuthConfig configures authentication. When Enabled is true mcp-diary acts as
 // its own OAuth 2.1 authorization server: MCP clients and the browser UI obtain
 // tokens from this server (registering themselves dynamically), and the server
-// federates user identity to Google behind the scenes. Each authenticated user
-// gets an isolated workspace underneath UsersDir.
+// federates user identity to the configured providers. Each authenticated user
+// gets an isolated workspace underneath UsersDir, named after their user id.
 type AuthConfig struct {
 	// Enabled turns on OAuth 2.1 authentication.
 	Enabled bool
@@ -89,10 +103,25 @@ type AuthConfig struct {
 	// example https://mcp.example.com). It is the OAuth issuer identifier.
 	PublicURL string
 	// GoogleClientID is the Google OAuth client id used on the server side.
+	// Empty disables Google login.
 	GoogleClientID string
 	// GoogleClientSecret is the Google OAuth client secret. It never leaves the
 	// server.
 	GoogleClientSecret string
+	// GiteeClientID is the Gitee OAuth client id. Empty hides Gitee login.
+	GiteeClientID string
+	// GiteeClientSecret is the Gitee OAuth client secret.
+	GiteeClientSecret string
+	// GiteeBaseURL overrides the Gitee endpoints. Empty uses gitee.com. Tests
+	// point it at a stand-in server.
+	GiteeBaseURL string
+	// EmailEnabled offers email-and-password registration and login.
+	EmailEnabled bool
+	// RequireEmailBinding blocks business endpoints until the user confirms an
+	// email address. Every login path, including Google, goes through it.
+	RequireEmailBinding bool
+	// SMTP delivers verification codes. Required when EmailEnabled is set.
+	SMTP SMTPConfig
 	// EncryptionKey encrypts OAuth state at rest. 32 bytes, base64 or hex
 	// encoded. Empty stores state unencrypted (development only).
 	EncryptionKey string
@@ -108,6 +137,10 @@ type AuthConfig struct {
 	// UsersDir is the directory, relative to Root unless absolute, where
 	// per-user workspaces are created.
 	UsersDir string
+	// UsersFile is the user store file, relative to StoreDir unless absolute.
+	UsersFile string
+	// MaxUserBytes caps a single user's workspace. Zero disables the cap.
+	MaxUserBytes int64
 }
 
 // SyncConfig holds the master key used to encrypt storage-medium credentials
@@ -136,11 +169,21 @@ func Default() Config {
 		Root:                ".",
 		MaxReadBytes:        1 << 20, // 1 MiB
 		Auth: AuthConfig{
-			AccessTokenTTL:  time.Hour,
-			RefreshTokenTTL: 90 * 24 * time.Hour,
-			MaxClientsPerIP: 10,
-			StoreDir:        "auth",
-			UsersDir:        "users",
+			EmailEnabled:        true,
+			RequireEmailBinding: true,
+			AccessTokenTTL:      time.Hour,
+			RefreshTokenTTL:     90 * 24 * time.Hour,
+			MaxClientsPerIP:     10,
+			StoreDir:            "auth",
+			UsersDir:            "users",
+			UsersFile:           "users.json",
+			MaxUserBytes:        50 << 20, // 50 MiB
+			SMTP: SMTPConfig{
+				Port:     465,
+				TLSMode:  "ssl",
+				FromName: "mcp-diary",
+				Timeout:  10 * time.Second,
+			},
 		},
 		Web: WebConfig{
 			Enabled: true,
@@ -211,11 +254,19 @@ func (a AuthConfig) validate() error {
 	if a.PublicURL == "" {
 		return fmt.Errorf("auth public URL must not be empty when auth is enabled")
 	}
-	if a.GoogleClientID == "" {
-		return fmt.Errorf("google client id must not be empty when auth is enabled")
+	if a.GoogleClientID == "" && a.GiteeClientID == "" && !a.EmailEnabled {
+		return fmt.Errorf("at least one auth provider must be configured")
 	}
-	if a.GoogleClientSecret == "" {
-		return fmt.Errorf("google client secret must not be empty when auth is enabled")
+	if (a.GoogleClientID == "") != (a.GoogleClientSecret == "") {
+		return fmt.Errorf("google client id and secret must both be set or both be empty")
+	}
+	if (a.GiteeClientID == "") != (a.GiteeClientSecret == "") {
+		return fmt.Errorf("gitee client id and secret must both be set or both be empty")
+	}
+	if a.EmailEnabled {
+		if err := a.validateSMTP(); err != nil {
+			return err
+		}
 	}
 	if a.UsersDir == "" {
 		return fmt.Errorf("auth users directory must not be empty")
@@ -231,6 +282,27 @@ func (a AuthConfig) validate() error {
 	}
 	if a.MaxClientsPerIP < 0 {
 		return fmt.Errorf("auth max clients per IP must not be negative")
+	}
+	if a.MaxUserBytes < 0 {
+		return fmt.Errorf("max user bytes must not be negative")
+	}
+	return nil
+}
+
+// validateSMTP checks the mail configuration. Verification codes are how every
+// account proves its address, so a half-configured sender must not boot.
+func (a AuthConfig) validateSMTP() error {
+	s := a.SMTP
+	if s.Host == "" || s.Username == "" || s.Password == "" {
+		return fmt.Errorf("smtp host, username and password are required when email auth is enabled")
+	}
+	if s.Port <= 0 {
+		return fmt.Errorf("smtp port must be positive")
+	}
+	switch s.TLSMode {
+	case "ssl", "starttls", "plain":
+	default:
+		return fmt.Errorf("smtp tls mode must be %q, %q or %q", "ssl", "starttls", "plain")
 	}
 	return nil
 }

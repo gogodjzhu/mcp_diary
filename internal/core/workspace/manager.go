@@ -96,7 +96,7 @@ func (m *Manager) Filesystem(ctx context.Context) (*filesystem.Service, error) {
 }
 
 func (m *Manager) serviceFor(identity *identity.Identity) (*filesystem.Service, error) {
-	slug := identity.Slug()
+	slug := identity.WorkspaceKey()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -153,6 +153,9 @@ func (m *Manager) Root() string { return m.root }
 
 // UsersDir returns the directory that holds per-user workspaces.
 func (m *Manager) UsersDir() string { return m.usersDir }
+
+// UserDir returns the workspace directory of one user. It does not create it.
+func (m *Manager) UserDir(key string) string { return filepath.Join(m.usersDir, key) }
 
 // PerUser reports whether workspaces are isolated per identity.
 func (m *Manager) PerUser() bool { return m.perUser }

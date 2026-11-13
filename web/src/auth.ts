@@ -10,6 +10,7 @@ const SCOPES = 'mcp'
 const VERIFIER_KEY = 'diary.pkce.verifier'
 const STATE_KEY = 'diary.pkce.state'
 const TOKEN_KEY = 'diary.token'
+const PROVIDER_KEY = 'diary.provider'
 
 export interface TokenResponse {
   access_token: string
@@ -52,12 +53,24 @@ function resource(): string {
   return window.location.origin + '/mcp'
 }
 
-/** Start the authorization code flow by navigating to the authorization server. */
-export async function beginLogin(): Promise<void> {
+/**
+ * Start the authorization code flow for one provider. The provider is remembered
+ * in a short-lived cookie so the server's login page redirects straight to it
+ * instead of showing the picker. An empty provider shows the picker.
+ */
+export async function beginLogin(provider = ''): Promise<void> {
   const verifier = randomString()
   const state = randomString(24)
   sessionStorage.setItem(VERIFIER_KEY, verifier)
   sessionStorage.setItem(STATE_KEY, state)
+  // Remember the clicked provider for the login page. A cookie does not work:
+  // the server sets the same cookie HttpOnly for MCP clients, which this page
+  // cannot overwrite, so the server would keep routing to the previous choice.
+  if (provider) {
+    sessionStorage.setItem(PROVIDER_KEY, provider)
+  } else {
+    sessionStorage.removeItem(PROVIDER_KEY)
+  }
 
   const params = new URLSearchParams({
     response_type: 'code',

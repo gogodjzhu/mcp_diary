@@ -8,13 +8,19 @@ import (
 	"strings"
 
 	"github.com/gogodjzhu/mcp-diary/internal/auth/identity"
+	"github.com/gogodjzhu/mcp-diary/internal/auth/user"
 	"github.com/gogodjzhu/mcp-diary/internal/core/diarysync"
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 	"github.com/gogodjzhu/mcp-diary/internal/core/workspace"
 )
 
-func (h *Handler) handleMe(w http.ResponseWriter, id *identity.Identity) {
+func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request, id *identity.Identity) {
+	if h.cfg.Users != nil && user.ID(id.UserID).Valid() {
+		h.writeAccount(w, user.ID(id.UserID))
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id":  id.UserID,
 		"subject":  id.Subject,
 		"email":    id.Email,
 		"name":     id.Name,

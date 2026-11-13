@@ -59,9 +59,10 @@ type storeData struct {
 }
 
 var (
-	_ storage.Combined            = (*FileStore)(nil)
-	_ storage.TokenMetadataStore  = (*FileStore)(nil)
-	_ storage.TokenMetadataGetter = (*FileStore)(nil)
+	_ storage.Combined             = (*FileStore)(nil)
+	_ storage.TokenMetadataStore   = (*FileStore)(nil)
+	_ storage.TokenMetadataGetter  = (*FileStore)(nil)
+	_ storage.TokenRevocationStore = (*FileStore)(nil)
 )
 
 // NewFileStore opens (or creates) the store at path. A nil encryptor stores
@@ -590,6 +591,42 @@ func (s *FileStore) AtomicCheckAndMarkAuthCodeUsed(_ context.Context, code strin
 	}
 	copyCode := *authCode
 	return &copyCode, nil
+}
+
+// GetTokensByUserClient lists the access tokens issued to one user. clientID is
+// ignored: this store keeps one token per user, so the user id is enough.
+func (s *FileStore) GetTokensByUserClient(_ context.Context, userID, _ string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored, ok := s.data.Tokens[userID]
+	if !ok || stored.Token == nil || stored.Token.AccessToken == "" {
+		return nil, nil
+	}
+	return []string{stored.Token.AccessToken}, nil
+}
+
+// RevokeAllTokensForUserClient drops every token issued to a user. It is what
+// makes a password reset actually sign the user out.
+func (s *FileStore) RevokeAllTokensForUserClient(_ context.Context, userID, _ string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	revoked := 0
+	if _, ok := s.data.Tokens[userID]; ok {
+		delete(s.data.Tokens, userID)
+		revoked++
+	}
+	delete(s.data.UserInfo, userID)
+	for token, record := range s.data.Refresh {
+		if record.UserID == userID {
+			delete(s.data.Refresh, token)
+			revoked++
+		}
+	}
+	if err := s.persist(); err != nil {
+		return 0, err
+	}
+	return revoked, nil
 }
 
 func (s *FileStore) DeleteAuthorizationCode(_ context.Context, code string) error {

@@ -26,6 +26,7 @@ func newAuthApp(t *testing.T) *app.App {
 	cfg.Auth.PublicURL = testPublicURL
 	cfg.Auth.GoogleClientID = "google-client-id"
 	cfg.Auth.GoogleClientSecret = "google-client-secret"
+	cfg.Auth.EmailEnabled = false
 
 	logger, err := logging.New(cfg.LogLevel, cfg.LogFormat)
 	if err != nil {

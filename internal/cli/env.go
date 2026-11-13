@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gogodjzhu/mcp-diary/internal/platform/config"
@@ -20,6 +21,15 @@ var envBindings = []struct {
 	{"auth-public-url", "MCP_PUBLIC_URL", func(c *config.Config, v string) { c.Auth.PublicURL = v }},
 	{"google-client-id", "GOOGLE_CLIENT_ID", func(c *config.Config, v string) { c.Auth.GoogleClientID = v }},
 	{"google-client-secret", "GOOGLE_CLIENT_SECRET", func(c *config.Config, v string) { c.Auth.GoogleClientSecret = v }},
+	{"gitee-client-id", "GITEE_CLIENT_ID", func(c *config.Config, v string) { c.Auth.GiteeClientID = v }},
+	{"gitee-client-secret", "GITEE_CLIENT_SECRET", func(c *config.Config, v string) { c.Auth.GiteeClientSecret = v }},
+	{"smtp-host", "SMTP_HOST", func(c *config.Config, v string) { c.Auth.SMTP.Host = v }},
+	{"smtp-port", "SMTP_PORT", func(c *config.Config, v string) { c.Auth.SMTP.Port = atoi(v) }},
+	{"smtp-tls", "SMTP_TLS", func(c *config.Config, v string) { c.Auth.SMTP.TLSMode = v }},
+	{"smtp-username", "SMTP_USERNAME", func(c *config.Config, v string) { c.Auth.SMTP.Username = v }},
+	{"smtp-password", "SMTP_PASSWORD", func(c *config.Config, v string) { c.Auth.SMTP.Password = v }},
+	{"smtp-from", "SMTP_FROM", func(c *config.Config, v string) { c.Auth.SMTP.From = v }},
+	{"smtp-from-name", "SMTP_FROM_NAME", func(c *config.Config, v string) { c.Auth.SMTP.FromName = v }},
 	{"auth-encryption-key", "AUTH_ENCRYPTION_KEY", func(c *config.Config, v string) { c.Auth.EncryptionKey = v }},
 	{"sync-encryption-key", "SYNC_ENCRYPTION_KEY", func(c *config.Config, v string) { c.Sync.EncryptionKey = v }},
 }
@@ -84,4 +94,14 @@ func unquote(value string) string {
 		value = strings.TrimRight(value[:index], " \t")
 	}
 	return value
+}
+
+// atoi converts an environment value to int, keeping the flag default on
+// malformed input rather than failing startup over a typo.
+func atoi(v string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return 0
+	}
+	return n
 }

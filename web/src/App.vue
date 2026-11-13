@@ -10,6 +10,8 @@ import {
   splitGitHubDetail,
   getSettings,
   listMedia,
+  startLink,
+  unlinkIdentity,
   triggerSync,
   updateMedium,
   updateSettings,
@@ -142,6 +144,35 @@ onMounted(async () => {
     await refresh()
   }
 })
+
+const providerLabels: Record<string, string> = { google: 'Google', gitee: 'Gitee', email: '邮箱' }
+
+function linkedAs(provider: string): string {
+  const found = me.value?.identities?.find((i) => i.provider === provider)
+  return found ? found.email || found.name || '已绑定' : ''
+}
+
+async function linkProvider(provider: string): Promise<void> {
+  if (!token.value) return
+  clearError()
+  try {
+    const { url } = await startLink(token.value, provider)
+    window.location.assign(url)
+  } catch (err) {
+    showError(err)
+  }
+}
+
+async function unlink(provider: string): Promise<void> {
+  if (!token.value) return
+  clearError()
+  try {
+    await unlinkIdentity(token.value, provider)
+    me.value = await getMe(token.value)
+  } catch (err) {
+    showError(err)
+  }
+}
 
 function signOut(): void {
   clearSession()
@@ -388,7 +419,9 @@ function repoLabel(item: Medium): string {
     <p class="hint">日记通过 MCP 客户端记录；此页面用于确认登录身份，并配置同步到 GitHub 的存储介质。</p>
 
     <div v-if="!token">
-      <button @click="beginLogin">使用 Google 登录</button>
+      <button @click="beginLogin('google')">使用 Google 登录</button>
+      <button class="secondary" @click="beginLogin('gitee')">使用 Gitee 登录</button>
+      <button class="secondary" @click="beginLogin('email')">使用邮箱登录</button>
     </div>
     <div v-else class="session">
       <span v-if="me">已登录：{{ me.email || me.username }}</span>
@@ -414,6 +447,19 @@ function repoLabel(item: Medium): string {
         <dt>Scopes</dt>
         <dd>{{ me.scopes.join(', ') }}</dd>
       </dl>
+    </section>
+
+    <section v-if="me">
+      <h2>登录方式</h2>
+      <p class="hint">绑定后可以用对应的账号登录同一个用户。至少保留一个登录方式。</p>
+      <ul class="providers">
+        <li v-for="p in ['google', 'gitee']" :key="p">
+          <span>{{ providerLabels[p] }}</span>
+          <span v-if="linkedAs(p)" class="bound">{{ linkedAs(p) }}</span>
+          <button v-if="linkedAs(p)" class="secondary" @click="unlink(p)">解绑</button>
+          <button v-else @click="linkProvider(p)">绑定</button>
+        </li>
+      </ul>
     </section>
 
     <section v-if="me">
@@ -571,6 +617,30 @@ body {
 main {
   width: min(720px, 92vw);
   padding: 3rem 0;
+}
+
+.providers {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.providers li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.providers button {
+  margin-left: auto;
+}
+
+.bound {
+  color: #666;
+  font-size: 0.9rem;
 }
 
 h1 {
