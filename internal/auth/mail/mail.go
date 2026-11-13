@@ -3,9 +3,12 @@
 package mail
 
 import (
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"os"
@@ -44,6 +47,7 @@ type Message struct {
 // Sender delivers messages.
 type Sender struct {
 	cfg Config
+	now func() time.Time
 }
 
 // New validates the configuration and returns a sender.
@@ -68,7 +72,7 @@ func New(cfg Config) (*Sender, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 10 * time.Second
 	}
-	return &Sender{cfg: cfg}, nil
+	return &Sender{cfg: cfg, now: time.Now}, nil
 }
 
 // Config returns the resolved configuration.
@@ -149,7 +153,7 @@ func (s *Sender) tlsConfig() *tls.Config {
 func (s *Sender) render(msg Message) string {
 	from := s.cfg.From
 	if s.cfg.FromName != "" {
-		from = fmt.Sprintf("%s <%s>", quoteDisplayName(s.cfg.FromName), s.cfg.From)
+		from = fmt.Sprintf("%s <%s>", encodeDisplayName(s.cfg.FromName), s.cfg.From)
 	}
 	body := strings.ReplaceAll(msg.Body, "\r\n", "\n")
 	body = strings.ReplaceAll(body, "\n", "\r\n")
@@ -157,7 +161,12 @@ func (s *Sender) render(msg Message) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", from)
 	fmt.Fprintf(&b, "To: %s\r\n", msg.To)
-	fmt.Fprintf(&b, "Subject: %s\r\n", sanitizeHeader(msg.Subject))
+	fmt.Fprintf(&b, "Subject: %s\r\n", encodeSubject(msg.Subject))
+	// Date and Message-ID are mandatory for a syntactically valid message.
+	// Receivers reject submissions without them: Gmail, for instance, answers
+	// "550 5.7.1 Messages missing a valid Message-ID header are not accepted".
+	fmt.Fprintf(&b, "Date: %s\r\n", s.clock().Format(time.RFC1123Z))
+	fmt.Fprintf(&b, "Message-ID: %s\r\n", s.messageID())
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	b.WriteString("Content-Transfer-Encoding: 8bit\r\n")
@@ -166,13 +175,62 @@ func (s *Sender) render(msg Message) string {
 	return b.String()
 }
 
-// quoteDisplayName makes a display name safe for a From header.
-func quoteDisplayName(name string) string {
+func (s *Sender) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// messageID builds a globally unique id scoped to the sender's domain, as RFC
+// 5322 section 3.6.4 requires.
+func (s *Sender) messageID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("<%d@%s>", time.Now().UnixNano(), headerDomain(s.cfg.From))
+	}
+	return fmt.Sprintf("<%s@%s>", hex.EncodeToString(raw[:]), headerDomain(s.cfg.From))
+}
+
+// headerDomain is the domain part of an address, used to scope Message-IDs.
+func headerDomain(address string) string {
+	if at := strings.LastIndex(address, "@"); at >= 0 && at+1 < len(address) {
+		return address[at+1:]
+	}
+	return "mcp-diary.local"
+}
+
+// encodeSubject renders a header value that is safe on the wire. Non-ASCII text
+// must use RFC 2047 encoded-words; raw UTF-8 in a header is invalid and makes
+// receivers treat the message as spam or reject it outright.
+func encodeSubject(subject string) string {
+	subject = sanitizeHeader(subject)
+	if isASCII(subject) {
+		return subject
+	}
+	return mime.BEncoding.Encode("UTF-8", subject)
+}
+
+// encodeDisplayName quotes an ASCII display name and encoded-words a non-ASCII
+// one, so "mcp-diary" and Chinese names are both legal.
+func encodeDisplayName(name string) string {
 	name = sanitizeHeader(name)
 	if name == "" {
 		return ""
 	}
+	if !isASCII(name) {
+		return mime.BEncoding.Encode("UTF-8", name)
+	}
 	return `"` + strings.ReplaceAll(name, `"`, "'") + `"`
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func sanitizeHeader(value string) string {
