@@ -13,6 +13,15 @@ import (
 )
 
 const (
+	// DefaultHTTPTimeout bounds one Open-Meteo request.
+	DefaultHTTPTimeout = 8 * time.Second
+	// AttemptTimeout bounds one Weather lookup (geocoding plus one endpoint).
+	AttemptTimeout = 5 * time.Second
+	// Attempts is how many times a lookup is tried before giving up.
+	Attempts = 2
+)
+
+const (
 	geocodingURL = "https://geocoding-api.open-meteo.com/v1/search"
 	forecastURL  = "https://api.open-meteo.com/v1/forecast"
 	archiveURL   = "https://archive-api.open-meteo.com/v1/archive"
@@ -29,8 +38,9 @@ type WeatherClient struct {
 	http HTTPDoer
 	now  func() time.Time
 
-	mu    sync.Mutex
-	cache map[string]coords
+	mu      sync.Mutex
+	cache   map[string]coords
+	results map[string]Weather
 }
 
 type coords struct {
@@ -48,9 +58,9 @@ type Weather struct {
 // 8 second timeout.
 func NewWeatherClient(client HTTPDoer) *WeatherClient {
 	if client == nil {
-		client = &http.Client{Timeout: 8 * time.Second}
+		client = &http.Client{Timeout: DefaultHTTPTimeout}
 	}
-	return &WeatherClient{http: client, now: time.Now, cache: map[string]coords{}}
+	return &WeatherClient{http: client, now: time.Now, cache: map[string]coords{}, results: map[string]Weather{}}
 }
 
 // Weather resolves location to coordinates and returns that day's weather.
@@ -59,11 +69,30 @@ func (c *WeatherClient) Weather(ctx context.Context, location, date string) (Wea
 	if err != nil {
 		return Weather{}, err
 	}
+	key := resultKey(lat, lon, date)
+	c.mu.Lock()
+	cached, ok := c.results[key]
+	c.mu.Unlock()
+	if ok {
+		return cached, nil
+	}
 	code, err := c.codeForDate(ctx, lat, lon, date)
 	if err != nil {
 		return Weather{}, err
 	}
-	return Weather{Emoji: weatherEmoji(code), Code: code}, nil
+	w := Weather{Emoji: weatherEmoji(code), Code: code}
+	// Only successes are cached: a transient failure must not pin an empty
+	// icon for the rest of the process lifetime.
+	c.mu.Lock()
+	c.results[key] = w
+	c.mu.Unlock()
+	return w, nil
+}
+
+// resultKey identifies one day of weather for one place.
+func resultKey(lat, lon float64, date string) string {
+	return strconv.FormatFloat(lat, 'f', 4, 64) + "," +
+		strconv.FormatFloat(lon, 'f', 4, 64) + "," + date
 }
 
 func (c *WeatherClient) geocode(ctx context.Context, location string) (float64, float64, error) {
