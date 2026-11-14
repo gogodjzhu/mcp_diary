@@ -352,6 +352,12 @@ func AttachmentPath(month, name string) string {
 	return fmt.Sprintf("%s/%s/%s", year, month, name)
 }
 
+// RemoteImageName prefixes the diary date so two entries in the same month can
+// both have a file named 20261114-01.jpg without overwriting each other.
+func RemoteImageName(date, name string) string {
+	return date + "-" + name
+}
+
 func imageLines(e diary.Entry) []string {
 	out := make([]string, 0, len(e.Attachments))
 	for _, att := range e.Attachments {
@@ -362,7 +368,7 @@ func imageLines(e diary.Entry) []string {
 		if err != nil {
 			continue
 		}
-		out = append(out, "![]("+month+"/"+att.Name+")")
+		out = append(out, "![]("+month+"/"+RemoteImageName(e.DiaryDate, att.Name)+")")
 	}
 	return out
 }

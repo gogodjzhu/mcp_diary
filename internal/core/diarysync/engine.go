@@ -399,7 +399,7 @@ func (e *Engine) syncImages(ctx context.Context, fs *filesystem.Service, mediumI
 			if !strings.HasPrefix(att.MIME, "image/") || att.Name == "" || att.Path == "" {
 				continue
 			}
-			wanted[AttachmentPath(month, att.Name)] = att
+			wanted[AttachmentPath(month, RemoteImageName(entry.DiaryDate, att.Name))] = att
 		}
 	}
 	for path, att := range wanted {

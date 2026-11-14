@@ -323,10 +323,10 @@ func TestRenderMonthLinksImages(t *testing.T) {
 		}},
 	}}
 	got := string(RenderMonth(entries, "2026-11"))
-	if !strings.Contains(got, "![](2026-11/20261114-01.jpg)") {
+	if !strings.Contains(got, "![](2026-11/2026-11-14-20261114-01.jpg)") {
 		t.Fatalf("missing image link:\n%s", got)
 	}
-	if AttachmentPath("2026-11", "20261114-01.jpg") != "2026/2026-11/20261114-01.jpg" {
+	if AttachmentPath("2026-11", RemoteImageName("2026-11-14", "20261114-01.jpg")) != "2026/2026-11/2026-11-14-20261114-01.jpg" {
 		t.Fatalf("attachment path = %s", AttachmentPath("2026-11", "20261114-01.jpg"))
 	}
 }
