@@ -76,7 +76,6 @@ func NewEngine(syncSvc *Service, diarySvc *diary.Service, debounce time.Duration
 	if diarySvc != nil {
 		diarySvc.SetChangeHook(e.NotifyDates)
 	}
-	go e.loop()
 	return e
 }
 
@@ -84,23 +83,8 @@ func (e *Engine) Stop() {
 	e.cancel()
 }
 
-func (e *Engine) NotifyDates(fs *filesystem.Service, dates ...string) {
-	if fs == nil {
-		return
-	}
-	payload := job{fs: fs, months: map[string]struct{}{}}
-	for _, m := range MonthsFromDates(dates...) {
-		payload.months[m] = struct{}{}
-	}
-	if len(payload.months) == 0 {
-		return
-	}
-	// Block rather than drop. A dropped notification leaves the diary saved
-	// and the git mirror missing the change, with no error for the user.
-	select {
-	case <-e.ctx.Done():
-	case e.jobs <- payload:
-	}
+func (e *Engine) NotifyDates(fs *filesystem.Service, dates ...string) error {
+	return e.SyncNow(e.ctx, fs, dates...)
 }
 
 func (e *Engine) TriggerFull(ctx context.Context, fs *filesystem.Service) error {
@@ -198,6 +182,7 @@ func (e *Engine) loop() {
 				cur.timer = time.AfterFunc(e.debounce, func() {
 					select {
 					case <-e.ctx.Done():
+						return
 					case e.flush <- root:
 					}
 				})

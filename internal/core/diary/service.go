@@ -36,7 +36,9 @@ const (
 
 var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-type ChangeHook func(fs *filesystem.Service, dates ...string)
+// ChangeHook runs after a diary write. A returned error fails the write's
+// caller, so the user hears about a sync failure instead of a silent queue.
+type ChangeHook func(fs *filesystem.Service, dates ...string) error
 
 // MetaEnricher attaches derived metadata (lunar date, weekday, weather) to a
 // newly committed entry. It must be best-effort: an empty or partial result is
@@ -78,11 +80,11 @@ func (s *Service) SetMetaEnricher(m MetaEnricher) {
 	s.meta = m
 }
 
-func (s *Service) emitChange(fs *filesystem.Service, dates ...string) {
+func (s *Service) emitChange(fs *filesystem.Service, dates ...string) error {
 	if s.hook == nil || fs == nil {
-		return
+		return nil
 	}
-	s.hook(fs, dates...)
+	return s.hook(fs, dates...)
 }
 
 // storeFor returns the persisted store for the workspace behind fs, loading it
@@ -357,7 +359,9 @@ func (s *Service) CommitSession(ctx context.Context, fs *filesystem.Service, in 
 	}
 	date := entry.DiaryDate
 	st.mu.Unlock()
-	s.emitChange(fs, date)
+	if err := s.emitChange(fs, date); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
@@ -491,7 +495,9 @@ func (s *Service) UpdateEntry(ctx context.Context, fs *filesystem.Service, in Up
 	}
 	date := entry.DiaryDate
 	st.mu.Unlock()
-	s.emitChange(fs, date)
+	if err := s.emitChange(fs, date); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
@@ -633,7 +639,9 @@ func (s *Service) DeleteEntry(ctx context.Context, fs *filesystem.Service, in De
 	for _, rel := range files {
 		_ = fs.Delete(ctx, rel, false)
 	}
-	s.emitChange(fs, date)
+	if err := s.emitChange(fs, date); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
@@ -750,7 +758,9 @@ func (s *Service) AddAttachment(ctx context.Context, fs *filesystem.Service, in 
 	}
 	date := entry.DiaryDate
 	st.mu.Unlock()
-	s.emitChange(fs, date)
+	if err := s.emitChange(fs, date); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
@@ -824,7 +834,9 @@ func (s *Service) RemoveAttachment(ctx context.Context, fs *filesystem.Service, 
 	if rel != "" {
 		_ = fs.Delete(ctx, rel, false)
 	}
-	s.emitChange(fs, date)
+	if err := s.emitChange(fs, date); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
