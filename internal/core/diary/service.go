@@ -958,6 +958,61 @@ func isTextMIME(mime string) bool {
 // BackfillPreviews fills in a thumbnail for image attachments stored before
 // previews were generated. It does not bump the entry revision: the diary text
 // did not change, and a revision bump would make an open card fail its next edit.
+// GetAttachmentIn identifies one uploaded file on a committed entry.
+type GetAttachmentIn struct {
+	RequestID string
+	EntryID   string
+	FileID    string
+}
+
+// GetAttachment returns the original bytes of one attachment. List results
+// carry only a thumbnail, so viewing or downloading goes through this.
+func (s *Service) GetAttachment(ctx context.Context, fs *filesystem.Service, in GetAttachmentIn) (AttachmentFile, error) {
+	if err := requireRequestID(in.RequestID); err != nil {
+		return AttachmentFile{}, err
+	}
+	if strings.TrimSpace(in.EntryID) == "" {
+		return AttachmentFile{}, errf(codeBadRequest, "entry_id is required")
+	}
+	if strings.TrimSpace(in.FileID) == "" {
+		return AttachmentFile{}, errf(codeBadRequest, "file_id is required")
+	}
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return AttachmentFile{}, wrapInternal(err)
+	}
+	st.mu.Lock()
+	entry := st.data.Entries[in.EntryID]
+	var att *Attachment
+	if entry != nil {
+		for i := range entry.Attachments {
+			if entry.Attachments[i].FileID == in.FileID {
+				cp := entry.Attachments[i]
+				att = &cp
+				break
+			}
+		}
+	}
+	st.mu.Unlock()
+	if entry == nil {
+		return AttachmentFile{}, errf(codeNotFound, "entry %s not found", in.EntryID)
+	}
+	if att == nil {
+		return AttachmentFile{}, errf(codeNotFound, "attachment %s not found", in.FileID)
+	}
+	raw, err := fs.ReadFile(ctx, att.Path)
+	if err != nil {
+		return AttachmentFile{}, wrapInternal(err)
+	}
+	return AttachmentFile{
+		FileID:        att.FileID,
+		Name:          att.Name,
+		MIME:          att.MIME,
+		Size:          att.Size,
+		ContentBase64: base64.StdEncoding.EncodeToString(raw),
+	}, nil
+}
+
 func (s *Service) BackfillPreviews(ctx context.Context, fs *filesystem.Service) (int, error) {
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {

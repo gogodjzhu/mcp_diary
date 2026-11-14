@@ -106,3 +106,40 @@ func newRemoveDiaryAttachment(workspaces tools.WorkspaceProvider, svc *corediary
 		},
 	}
 }
+
+func newGetDiaryAttachment(workspaces tools.WorkspaceProvider, svc *corediary.Service) tools.Tool {
+	return diaryTool{
+		name: "getDiaryAttachment",
+		definition: mcp.NewTool(
+			"getDiaryAttachment",
+			mcp.WithDescription("Read the original bytes of one file attached to a committed diary entry. Used by the diary card to view or download the file. List results carry only a thumbnail."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithString("request_id", mcp.Required(), mcp.Description("Caller-generated idempotency key.")),
+			mcp.WithString("entry_id", mcp.Required(), mcp.Description("Committed entry id.")),
+			mcp.WithString("file_id", mcp.Required(), mcp.Description("Attachment id.")),
+		),
+		handle: func(ctx context.Context, request mcp.CallToolRequest) (any, error) {
+			fs, err := workspaceFS(ctx, workspaces)
+			if err != nil {
+				return nil, err
+			}
+			requestID, err := requireRequestID(request)
+			if err != nil {
+				return nil, err
+			}
+			entryID, err := request.RequireString("entry_id")
+			if err != nil {
+				return nil, argError("entry_id is required")
+			}
+			fileID, err := request.RequireString("file_id")
+			if err != nil {
+				return nil, argError("file_id is required")
+			}
+			return svc.GetAttachment(ctx, fs, corediary.GetAttachmentIn{
+				RequestID: requestID,
+				EntryID:   entryID,
+				FileID:    fileID,
+			})
+		},
+	}
+}

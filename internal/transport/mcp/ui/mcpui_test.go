@@ -112,6 +112,8 @@ func TestEntriesViewHasNoRaceProneReload(t *testing.T) {
 		"type=\"file\"",
 		"noteOn(",
 		"fitImage(",
+		"view-file",
+		"getDiaryAttachment",
 		"compressAt",
 		"expected_revision",
 		"updateModelContext(",
@@ -144,7 +146,7 @@ func TestBridgeExposesToolResultStream(t *testing.T) {
 
 func TestUIOnlyToolsAreDeclared(t *testing.T) {
 	uiOnly := RegistryVisibility()
-	for _, name := range []string{"deleteDiaryEntry", "addDiaryAttachment", "removeDiaryAttachment"} {
+	for _, name := range []string{"deleteDiaryEntry", "addDiaryAttachment", "removeDiaryAttachment", "getDiaryAttachment"} {
 		if _, ok := uiOnly[name]; !ok {
 			t.Fatalf("%s must be app-only", name)
 		}

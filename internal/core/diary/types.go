@@ -117,6 +117,16 @@ type StoredAttachment struct {
 	Attachment Attachment `json:"attachment"`
 }
 
+// AttachmentFile is the original bytes of one uploaded file, for viewing or
+// downloading. It is not included in list results.
+type AttachmentFile struct {
+	FileID        string `json:"file_id"`
+	Name          string `json:"name"`
+	MIME          string `json:"mime"`
+	Size          int64  `json:"size"`
+	ContentBase64 string `json:"content_base64"`
+}
+
 // RemovedAttachment is the result of detaching one uploaded file from an entry.
 type RemovedAttachment struct {
 	EntryID  string `json:"entry_id"`

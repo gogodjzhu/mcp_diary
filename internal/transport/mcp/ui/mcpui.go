@@ -110,7 +110,7 @@ func Views() []View {
 			// These tools are callable from the view only. The list renders
 			// its own confirmation, and the upload control reads the file the
 			// user picked, so the model never needs to see them.
-			UIOnlyTools: []string{"deleteDiaryEntry", "addDiaryAttachment", "removeDiaryAttachment"},
+			UIOnlyTools: []string{"deleteDiaryEntry", "addDiaryAttachment", "removeDiaryAttachment", "getDiaryAttachment"},
 			ModelDescription: "An interactive card list of the user's committed diary entries. " +
 				"Each card shows the date and the start of the entry; clicking expands it. " +
 				"The list has its own pagination and delete controls.",

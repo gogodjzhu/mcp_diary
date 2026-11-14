@@ -490,6 +490,27 @@
             }
             box.appendChild(item);
           });
+          var pictures = files.filter(function (file) {
+            return file.mime && file.mime.indexOf("image/") === 0 && file.preview;
+          });
+          if (pictures.length) {
+            var strip = B.el("div", "thumbs");
+            pictures.forEach(function (file) {
+              var button = B.el("button", "thumb-btn");
+              button.type = "button";
+              button.title = "查看 " + (file.name || "图片");
+              button.setAttribute("aria-label", "查看 " + (file.name || "图片"));
+              button.setAttribute("data-action", "view-file");
+              button.setAttribute("data-file-id", file.file_id);
+              var img = document.createElement("img");
+              img.className = "thumb";
+              img.alt = file.name || "图片";
+              img.src = "data:image/jpeg;base64," + file.preview;
+              button.appendChild(img);
+              strip.appendChild(button);
+            });
+            box.insertBefore(strip, box.firstChild);
+          }
           return box;
         }
 
@@ -627,6 +648,93 @@
                 return load(data ? data.page : 1);
               }
               noteOn(entry.entry_id, "上传失败：" + message, true);
+              paint();
+            });
+        }
+
+        function closeViewer() {
+          var viewer = document.getElementById("viewer");
+          if (viewer) viewer.remove();
+        }
+
+        function saveFile(name, mime, b64) {
+          var binary = atob(b64);
+          var bytes = new Uint8Array(binary.length);
+          for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          var blob = new Blob([bytes], { type: mime || "application/octet-stream" });
+          var url = URL.createObjectURL(blob);
+          var link = document.createElement("a");
+          link.href = url;
+          link.download = name || "file";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        }
+
+        function showOriginal(entry, file, payload) {
+          closeViewer();
+          var viewer = B.el("div", "viewer");
+          viewer.id = "viewer";
+          viewer.setAttribute("role", "dialog");
+          viewer.setAttribute("aria-label", file.name || "原图");
+          var bar = B.el("div", "viewer-bar");
+          bar.appendChild(B.el("span", "viewer-name", file.name || file.file_id));
+          var download = B.el("button", "btn", "下载");
+          download.type = "button";
+          download.setAttribute("data-action", "download-original");
+          var close = B.el("button", "btn", "关闭");
+          close.type = "button";
+          close.setAttribute("data-action", "close-viewer");
+          bar.appendChild(download);
+          bar.appendChild(close);
+          viewer.appendChild(bar);
+          if (payload.mime && payload.mime.indexOf("image/") === 0) {
+            var img = document.createElement("img");
+            img.alt = file.name || "原图";
+            img.src = "data:" + payload.mime + ";base64," + payload.content_base64;
+            viewer.appendChild(img);
+          } else {
+            viewer.appendChild(B.el("p", null, "这个文件不是图片，可以下载查看。"));
+          }
+          viewer.addEventListener("click", function (event) {
+            event.stopPropagation();
+            var action = event.target && event.target.getAttribute && event.target.getAttribute("data-action");
+            if (action === "close-viewer" || event.target === viewer) closeViewer();
+            if (action === "download-original") saveFile(payload.name || file.name, payload.mime, payload.content_base64);
+          });
+          document.addEventListener("keydown", function onKey(event) {
+            if (event.key === "Escape") {
+              closeViewer();
+              document.removeEventListener("keydown", onKey);
+            }
+          });
+          document.body.appendChild(viewer);
+          close.focus();
+        }
+
+        function viewFile(entry, fileID) {
+          var file = (entry.attachments || []).filter(function (f) { return f.file_id === fileID; })[0];
+          if (!file || busy) return;
+          busy = entry.entry_id;
+          noteOn(entry.entry_id, "正在打开原图…");
+          paint();
+          window.diary
+            .callTool("getDiaryAttachment", {
+              request_id: B.uuid(),
+              entry_id: entry.entry_id,
+              file_id: fileID,
+            })
+            .then(B.unwrap)
+            .then(function (payload) {
+              busy = "";
+              notes[entry.entry_id] = null;
+              paint();
+              showOriginal(entry, file, payload || {});
+            })
+            .catch(function (err) {
+              busy = "";
+              noteOn(entry.entry_id, "打开失败：" + (err && err.message ? err.message : String(err)), true);
               paint();
             });
         }
@@ -834,7 +942,8 @@
         }
 
         function onCardClick(card, event) {
-          var action = event.target && event.target.getAttribute && event.target.getAttribute("data-action");
+          var actor = event.target && event.target.closest ? event.target.closest("[data-action]") : event.target;
+          var action = actor && actor.getAttribute ? actor.getAttribute("data-action") : "";
           var entryID = card.getAttribute("data-entry-id");
           var entry = (data.entries || []).filter(function (e) {
             return e.entry_id === entryID;
@@ -858,6 +967,12 @@
             event.stopPropagation();
             var fileID = event.target.getAttribute("data-file-id");
             if (fileID) removeFile(entry, fileID, data.page || 1);
+            return;
+          }
+          if (action === "view-file") {
+            event.stopPropagation();
+            var viewID = actor && actor.getAttribute ? actor.getAttribute("data-file-id") : "";
+            if (viewID) viewFile(entry, viewID);
             return;
           }
           if (deleting === entryID) {
