@@ -95,11 +95,11 @@ func (e *Engine) NotifyDates(fs *filesystem.Service, dates ...string) {
 	if len(payload.months) == 0 {
 		return
 	}
+	// Block rather than drop. A dropped notification leaves the diary saved
+	// and the git mirror missing the change, with no error for the user.
 	select {
 	case <-e.ctx.Done():
 	case e.jobs <- payload:
-	default:
-		e.logger.Warn("sync job queue full; dropping debounce event")
 	}
 }
 
