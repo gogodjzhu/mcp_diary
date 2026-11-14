@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -383,7 +386,7 @@ func TestAddAttachmentStoresBytesAndPreview(t *testing.T) {
 	ctx := context.Background()
 	entryID := committedEntry(t, svc, fs, "2026-10-03", "with a photo")
 
-	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01}
+	png := tinyPNG(t)
 	stored, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
 		RequestID:        "att-1",
 		EntryID:          entryID,
@@ -559,4 +562,15 @@ func committedEntry(t *testing.T, svc *Service, fs *filesystem.Service, date, co
 		t.Fatalf("commit: %v", err)
 	}
 	return committed.EntryID
+}
+
+func tinyPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 8, 4))
+	img.Set(0, 0, color.RGBA{R: 220, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	return buf.Bytes()
 }

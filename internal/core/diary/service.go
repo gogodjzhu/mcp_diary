@@ -1,11 +1,16 @@
 package diary
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"image"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
 	"net/http"
 	"path"
 	"regexp"
@@ -893,16 +898,50 @@ func extractText(mime string, raw []byte) string {
 	return string(raw)
 }
 
-// imagePreview keeps a small image inline so the diary card can show it
-// without a second request. Larger images stay as files; the card shows the name.
+// previewMaxEdge is the longest side of the thumbnail stored next to an
+// image attachment. The card renders this; the original file stays untouched.
+const previewMaxEdge = 480
+
+// imagePreview makes a small JPEG thumbnail so the diary card can show the
+// picture without a second request. Decoding failure leaves the card with the
+// file name only; the original bytes are already stored.
 func imagePreview(mime string, raw []byte) string {
 	if !strings.HasPrefix(mime, "image/") || mime == "image/svg+xml" {
 		return ""
 	}
-	if len(raw) > maxExtractBytes {
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
 		return ""
 	}
-	return base64.StdEncoding.EncodeToString(raw)
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	nw, nh := fitEdge(w, h, previewMaxEdge)
+	thumb := image.NewRGBA(image.Rect(0, 0, nw, nh))
+	for y := 0; y < nh; y++ {
+		sy := b.Min.Y + y*h/nh
+		for x := 0; x < nw; x++ {
+			sx := b.Min.X + x*w/nw
+			thumb.Set(x, y, img.At(sx, sy))
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 70}); err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func fitEdge(w, h, edge int) (int, int) {
+	if w <= edge && h <= edge {
+		return w, h
+	}
+	if w >= h {
+		return edge, max(1, h*edge/w)
+	}
+	return max(1, w*edge/h), edge
 }
 
 func isTextMIME(mime string) bool {
@@ -914,6 +953,50 @@ func isTextMIME(mime string) bool {
 		return true
 	}
 	return strings.HasSuffix(mime, "+json") || strings.HasSuffix(mime, "+xml")
+}
+
+// BackfillPreviews fills in a thumbnail for image attachments stored before
+// previews were generated. It does not bump the entry revision: the diary text
+// did not change, and a revision bump would make an open card fail its next edit.
+func (s *Service) BackfillPreviews(ctx context.Context, fs *filesystem.Service) (int, error) {
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return 0, wrapInternal(err)
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	filled := 0
+	for _, entry := range st.data.Entries {
+		changed := false
+		for i := range entry.Attachments {
+			att := &entry.Attachments[i]
+			if att.Preview != "" || !strings.HasPrefix(att.MIME, "image/") || att.MIME == "image/svg+xml" || att.Path == "" {
+				continue
+			}
+			raw, err := fs.ReadFile(ctx, att.Path)
+			if err != nil {
+				return filled, wrapInternal(err)
+			}
+			preview := imagePreview(att.MIME, raw)
+			if preview == "" {
+				continue
+			}
+			att.Preview = preview
+			changed = true
+			filled++
+		}
+		if changed {
+			entry.UpdatedAt = st.now().In(s.loc)
+		}
+	}
+	if filled == 0 {
+		return 0, nil
+	}
+	if err := st.persistLocked(ctx); err != nil {
+		return 0, wrapInternal(err)
+	}
+	return filled, nil
 }
 
 func (s *Service) ListCommitted(ctx context.Context, fs *filesystem.Service) ([]Entry, error) {
