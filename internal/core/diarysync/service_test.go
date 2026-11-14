@@ -3,6 +3,8 @@ package diarysync
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -250,7 +252,7 @@ func TestFakeProviderPushDeleteStatus(t *testing.T) {
 	}
 }
 
-func TestAttachmentChannelReserved(t *testing.T) {
+func TestAttachmentPushRecordsContentHash(t *testing.T) {
 	svc, fs, _, _ := testService(t)
 	ctx := context.Background()
 	medium, err := svc.Upsert(ctx, fs, UpsertIn{
@@ -260,13 +262,17 @@ func TestAttachmentChannelReserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	_, err = svc.Push(ctx, fs, medium.ID, Document{Kind: DocumentAttachment, Path: "attachments/a.bin"})
-	if !errors.Is(err, ErrAttachmentNotSupported) {
-		t.Fatalf("Push err = %v", err)
+	body := []byte("jpeg-bytes")
+	result, err := svc.Push(ctx, fs, medium.ID, Document{Kind: DocumentAttachment, Path: "2026/2026-11/20261114-01.jpg", Body: body})
+	if err != nil {
+		t.Fatalf("Push: %v", err)
 	}
-	_, err = svc.Remove(ctx, fs, medium.ID, DocumentRef{Kind: DocumentAttachment, Path: "attachments/a.bin"})
-	if !errors.Is(err, ErrAttachmentNotSupported) {
-		t.Fatalf("Remove err = %v", err)
+	sum := sha256.Sum256(body)
+	if result.RemoteID != hex.EncodeToString(sum[:]) {
+		t.Fatalf("remote id = %s", result.RemoteID)
+	}
+	if _, err := svc.Remove(ctx, fs, medium.ID, DocumentRef{Kind: DocumentAttachment, Path: result.Path}); err != nil {
+		t.Fatalf("Remove: %v", err)
 	}
 }
 

@@ -2,6 +2,8 @@ package diarysync
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -222,9 +224,6 @@ func (s *Service) Trigger(ctx context.Context, fs *filesystem.Service, mediumID 
 }
 
 func (s *Service) Push(ctx context.Context, fs *filesystem.Service, mediumID string, doc Document) (Result, error) {
-	if doc.Kind == DocumentAttachment {
-		return Result{}, ErrAttachmentNotSupported
-	}
 	st, provider, err := s.open(ctx, fs, mediumID)
 	if err != nil {
 		return Result{}, err
@@ -243,6 +242,10 @@ func (s *Service) Push(ctx context.Context, fs *filesystem.Service, mediumID str
 	if result.SyncedAt.IsZero() {
 		result.SyncedAt = s.now()
 	}
+	if doc.Kind == DocumentAttachment {
+		sum := sha256.Sum256(doc.Body)
+		result.RemoteID = hex.EncodeToString(sum[:])
+	}
 	if err := st.RecordPush(ctx, mediumID, doc, result); err != nil {
 		return Result{}, err
 	}
@@ -250,9 +253,6 @@ func (s *Service) Push(ctx context.Context, fs *filesystem.Service, mediumID str
 }
 
 func (s *Service) Remove(ctx context.Context, fs *filesystem.Service, mediumID string, ref DocumentRef) (Result, error) {
-	if ref.Kind == DocumentAttachment {
-		return Result{}, ErrAttachmentNotSupported
-	}
 	st, provider, err := s.open(ctx, fs, mediumID)
 	if err != nil {
 		return Result{}, err

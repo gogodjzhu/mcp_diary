@@ -52,9 +52,6 @@ func (p *MemoryProvider) Push(ctx context.Context, doc Document) (Result, error)
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if doc.Kind == DocumentAttachment {
-		return Result{}, ErrAttachmentNotSupported
-	}
 	now := p.now()
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -108,9 +105,6 @@ func (p *MemoryProvider) Verify(ctx context.Context) (VerifyResult, error) {
 func (p *MemoryProvider) Get(ctx context.Context, ref DocumentRef) ([]byte, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
-	}
-	if ref.Kind == DocumentAttachment {
-		return nil, false, ErrAttachmentNotSupported
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()

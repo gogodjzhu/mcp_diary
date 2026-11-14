@@ -314,3 +314,19 @@ func TestMonthUnchangedUsesRevisionAndIDs(t *testing.T) {
 		t.Fatal("revision bump should sync")
 	}
 }
+
+func TestRenderMonthLinksImages(t *testing.T) {
+	entries := []diary.Entry{{
+		EntryID: "de_1", DiaryDate: "2026-11-14", Content: "with a photo",
+		Attachments: []diary.Attachment{{
+			FileID: "df_1", Name: "20261114-01.jpg", MIME: "image/jpeg",
+		}},
+	}}
+	got := string(RenderMonth(entries, "2026-11"))
+	if !strings.Contains(got, "![](2026-11/20261114-01.jpg)") {
+		t.Fatalf("missing image link:\n%s", got)
+	}
+	if AttachmentPath("2026-11", "20261114-01.jpg") != "2026/2026-11/20261114-01.jpg" {
+		t.Fatalf("attachment path = %s", AttachmentPath("2026-11", "20261114-01.jpg"))
+	}
+}

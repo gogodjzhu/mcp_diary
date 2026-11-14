@@ -17,6 +17,8 @@ const monthLayout = "2006-01"
 // markdown: six full-width em dashes.
 const daySeparator = "——————"
 
+const newline = "\n"
+
 // dateLeadRE matches a day header line that starts with a YYYY-MM-DD date,
 // optionally followed by "，农历，星期，天气" metadata.
 var dateLeadRE = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})`)
@@ -99,6 +101,11 @@ func renderDayBlock(e diary.Entry) string {
 		b.WriteString("\n")
 		b.WriteString(content)
 		b.WriteString("\n")
+	}
+	for _, line := range imageLines(e) {
+		b.WriteString(newline)
+		b.WriteString(line)
+		b.WriteString(newline)
 	}
 	return b.String()
 }
@@ -333,6 +340,31 @@ func splitLines(body []byte) []string {
 		parts = parts[:len(parts)-1]
 	}
 	return parts
+}
+
+// AttachmentPath is where an entry's picture is stored in the remote
+// repository, next to that month's markdown file.
+func AttachmentPath(month, name string) string {
+	year := month
+	if len(month) >= 4 {
+		year = month[:4]
+	}
+	return fmt.Sprintf("%s/%s/%s", year, month, name)
+}
+
+func imageLines(e diary.Entry) []string {
+	out := make([]string, 0, len(e.Attachments))
+	for _, att := range e.Attachments {
+		if !strings.HasPrefix(att.MIME, "image/") || att.Name == "" {
+			continue
+		}
+		month, err := MonthKey(e.DiaryDate)
+		if err != nil {
+			continue
+		}
+		out = append(out, "![]("+month+"/"+att.Name+")")
+	}
+	return out
 }
 
 func SourceFrom(entries []diary.Entry) Source {

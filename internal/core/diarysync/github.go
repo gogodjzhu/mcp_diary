@@ -230,6 +230,103 @@ func newGitHubProvider(medium Medium, credential string, client HTTPDoer, now fu
 	}, nil
 }
 
+// pushBlob commits a binary file through the Git Data API. The contents API
+// rejects files around 1 MB, and a diary picture can be up to 5 MB.
+func (p *GitHubProvider) pushBlob(ctx context.Context, doc Document) (Result, error) {
+	path := strings.TrimPrefix(doc.Path, "/")
+	ref, err := p.branchHead(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	blobSHA, err := p.createBlob(ctx, doc.Body)
+	if err != nil {
+		return Result{}, err
+	}
+	treeSHA, err := p.createTree(ctx, ref.TreeSHA, path, blobSHA)
+	if err != nil {
+		return Result{}, err
+	}
+	commitSHA, err := p.createCommit(ctx, fmt.Sprintf("sync diary %s", path), treeSHA, ref.CommitSHA)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := p.updateBranch(ctx, ref.CommitSHA, commitSHA); err != nil {
+		return Result{}, err
+	}
+	return Result{Path: path, RemoteID: blobSHA, SyncedAt: p.now()}, nil
+}
+
+type githubRef struct {
+	CommitSHA string
+	TreeSHA   string
+}
+
+func (p *GitHubProvider) branchHead(ctx context.Context) (githubRef, error) {
+	var out struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := p.doJSON(ctx, http.MethodGet, p.repoURL()+"/git/ref/heads/"+url.PathEscape(p.settings.Branch), nil, http.StatusOK, http.StatusOK, &out); err != nil {
+		return githubRef{}, err
+	}
+	var commit struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	if err := p.doJSON(ctx, http.MethodGet, p.repoURL()+"/git/commits/"+out.Object.SHA, nil, http.StatusOK, http.StatusOK, &commit); err != nil {
+		return githubRef{}, err
+	}
+	return githubRef{CommitSHA: out.Object.SHA, TreeSHA: commit.Tree.SHA}, nil
+}
+
+func (p *GitHubProvider) createBlob(ctx context.Context, body []byte) (string, error) {
+	var out struct {
+		SHA string `json:"sha"`
+	}
+	payload := map[string]string{"content": base64.StdEncoding.EncodeToString(body), "encoding": "base64"}
+	if err := p.doJSON(ctx, http.MethodPost, p.repoURL()+"/git/blobs", payload, http.StatusCreated, http.StatusCreated, &out); err != nil {
+		return "", err
+	}
+	return out.SHA, nil
+}
+
+func (p *GitHubProvider) createTree(ctx context.Context, baseTree, path, blobSHA string) (string, error) {
+	var out struct {
+		SHA string `json:"sha"`
+	}
+	payload := map[string]any{
+		"base_tree": baseTree,
+		"tree": []map[string]string{{
+			"path": path,
+			"mode": "100644",
+			"type": "blob",
+			"sha":  blobSHA,
+		}},
+	}
+	if err := p.doJSON(ctx, http.MethodPost, p.repoURL()+"/git/trees", payload, http.StatusCreated, http.StatusCreated, &out); err != nil {
+		return "", err
+	}
+	return out.SHA, nil
+}
+
+func (p *GitHubProvider) createCommit(ctx context.Context, message, treeSHA, parentSHA string) (string, error) {
+	var out struct {
+		SHA string `json:"sha"`
+	}
+	payload := map[string]any{"message": message, "tree": treeSHA, "parents": []string{parentSHA}}
+	if err := p.doJSON(ctx, http.MethodPost, p.repoURL()+"/git/commits", payload, http.StatusCreated, http.StatusCreated, &out); err != nil {
+		return "", err
+	}
+	return out.SHA, nil
+}
+
+func (p *GitHubProvider) updateBranch(ctx context.Context, expected, commitSHA string) error {
+	payload := map[string]string{"sha": commitSHA}
+	return p.doJSON(ctx, http.MethodPatch, p.repoURL()+"/git/refs/heads/"+url.PathEscape(p.settings.Branch), payload, http.StatusOK, http.StatusOK, nil)
+}
+
 func (p *GitHubProvider) Kind() Kind { return KindGitHub }
 
 func (p *GitHubProvider) Push(ctx context.Context, doc Document) (Result, error) {
@@ -237,7 +334,7 @@ func (p *GitHubProvider) Push(ctx context.Context, doc Document) (Result, error)
 		return Result{}, err
 	}
 	if doc.Kind == DocumentAttachment {
-		return Result{}, ErrAttachmentNotSupported
+		return p.pushBlob(ctx, doc)
 	}
 	path := strings.TrimPrefix(doc.Path, "/")
 	existing, err := p.getFile(ctx, path)
@@ -324,9 +421,7 @@ func (p *GitHubProvider) Delete(ctx context.Context, ref DocumentRef) (Result, e
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if ref.Kind == DocumentAttachment {
-		return Result{}, ErrAttachmentNotSupported
-	}
+
 	path := strings.TrimPrefix(ref.Path, "/")
 	existing, err := p.getFile(ctx, path)
 	if err != nil {
@@ -368,9 +463,7 @@ func (p *GitHubProvider) Get(ctx context.Context, ref DocumentRef) ([]byte, bool
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	if ref.Kind == DocumentAttachment {
-		return nil, false, ErrAttachmentNotSupported
-	}
+
 	path := strings.TrimPrefix(ref.Path, "/")
 	file, err := p.getFile(ctx, path)
 	if err != nil {

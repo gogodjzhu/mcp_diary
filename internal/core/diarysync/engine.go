@@ -367,6 +367,10 @@ func (e *Engine) syncMonth(ctx context.Context, fs *filesystem.Service, mediumID
 }
 
 func (e *Engine) pushMonth(ctx context.Context, fs *filesystem.Service, mediumID, path string, body []byte, src Source) error {
+	month := monthFromPath(path)
+	if err := e.syncImages(ctx, fs, mediumID, month, src); err != nil {
+		return err
+	}
 	doc := Document{
 		Kind:        DocumentText,
 		Path:        path,
@@ -378,6 +382,72 @@ func (e *Engine) pushMonth(ctx context.Context, fs *filesystem.Service, mediumID
 		_, err := e.sync.Push(ctx, fs, mediumID, doc)
 		return err
 	})
+}
+
+func (e *Engine) syncImages(ctx context.Context, fs *filesystem.Service, mediumID, month string, src Source) error {
+	state, err := e.sync.State(ctx, fs, mediumID)
+	if err != nil {
+		return err
+	}
+	entries, err := e.diary.ListCommitted(ctx, fs)
+	if err != nil {
+		return err
+	}
+	wanted := map[string]diary.Attachment{}
+	for _, entry := range EntriesForMonth(entries, month) {
+		for _, att := range entry.Attachments {
+			if !strings.HasPrefix(att.MIME, "image/") || att.Name == "" || att.Path == "" {
+				continue
+			}
+			wanted[AttachmentPath(month, att.Name)] = att
+		}
+	}
+	for path, att := range wanted {
+		recorded := ""
+		if state != nil {
+			recorded = state.Documents[path].RemoteID
+		}
+		if recorded != "" && recorded == att.SHA256 {
+			continue
+		}
+		body, err := fs.ReadFile(ctx, att.Path)
+		if err != nil {
+			return err
+		}
+		doc := Document{
+			Kind:        DocumentAttachment,
+			Path:        path,
+			Body:        body,
+			ContentType: att.MIME,
+			Source:      src,
+		}
+		if err := e.withRetry(ctx, func() error {
+			_, err := e.sync.Push(ctx, fs, mediumID, doc)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	if state == nil {
+		return nil
+	}
+	prefix := strings.TrimSuffix(MonthPath(month), ".md") + "/"
+	for path := range state.Documents {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		if _, ok := wanted[path]; ok {
+			continue
+		}
+		removed := path
+		if err := e.withRetry(ctx, func() error {
+			_, err := e.sync.Remove(ctx, fs, mediumID, DocumentRef{Kind: DocumentAttachment, Path: removed})
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *Engine) removeMonth(ctx context.Context, fs *filesystem.Service, mediumID, path string) error {
