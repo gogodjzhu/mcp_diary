@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	_ "image/gif"
 	"image/jpeg"
@@ -682,10 +683,9 @@ func (s *Service) AddAttachment(ctx context.Context, fs *filesystem.Service, in 
 	if err != nil {
 		return StoredAttachment{}, err
 	}
-	name := cleanFileName(in.Name)
 	mime := sniffMIME(in.MIME, raw)
-	if stored, storedMIME, storedName, ok := normalizeImage(mime, name, raw); ok {
-		raw, mime, name = stored, storedMIME, storedName
+	if stored, storedMIME, ok := normalizeImage(mime, raw); ok {
+		raw, mime = stored, storedMIME
 	}
 
 	st, err := s.storeFor(ctx, fs)
@@ -720,6 +720,7 @@ func (s *Service) AddAttachment(ctx context.Context, fs *filesystem.Service, in 
 	rel := path.Join(filesDir, fileID)
 	sum := sha256.Sum256(raw)
 	now := st.now().In(s.loc)
+	name := attachmentName(entry, now, mime)
 	att := Attachment{
 		FileID:    fileID,
 		Name:      name,
@@ -920,27 +921,27 @@ const previewMaxEdge = 480
 // jpegLimit. A picture the widget could not compress is handled here; a
 // picture it already compressed is still re-encoded so the stored format is
 // always JPEG. Undecodable bytes return ok=false and are stored unchanged.
-func normalizeImage(mime, name string, raw []byte) ([]byte, string, string, bool) {
+func normalizeImage(mime string, raw []byte) ([]byte, string, bool) {
 	if !isRasterImage(mime) {
-		return nil, "", "", false
+		return nil, "", false
 	}
 	img, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
-		return nil, "", "", false
+		return nil, "", false
 	}
 	edge := max(img.Bounds().Dx(), img.Bounds().Dy())
 	if edge <= 0 {
-		return nil, "", "", false
+		return nil, "", false
 	}
 	quality := 85
 	for {
 		scaled := scaleImage(img, edge)
 		var buf bytes.Buffer
 		if err := jpeg.Encode(&buf, scaled, &jpeg.Options{Quality: quality}); err != nil {
-			return nil, "", "", false
+			return nil, "", false
 		}
 		if buf.Len() <= jpegLimit || (edge <= 1024 && quality <= 50) {
-			return buf.Bytes(), "image/jpeg", jpegName(name), true
+			return buf.Bytes(), "image/jpeg", true
 		}
 		if quality > 55 {
 			quality -= 15
@@ -955,12 +956,48 @@ func isRasterImage(mime string) bool {
 	return strings.HasPrefix(mime, "image/") && mime != "image/svg+xml"
 }
 
-func jpegName(name string) string {
-	base := strings.TrimSuffix(path.Base(name), path.Ext(name))
-	if base == "" || base == "." {
-		base = "photo"
+func attachmentName(entry *Entry, now time.Time, mime string) string {
+	seq := 1
+	prefix := now.Format("20060102") + "-"
+	for _, att := range entry.Attachments {
+		if !strings.HasPrefix(att.Name, prefix) {
+			continue
+		}
+		rest := strings.TrimSuffix(strings.TrimPrefix(att.Name, prefix), path.Ext(att.Name))
+		n := 0
+		for _, r := range rest {
+			if r < '0' || r > '9' {
+				n = 0
+				break
+			}
+			n = n*10 + int(r-'0')
+		}
+		if n >= seq {
+			seq = n + 1
+		}
 	}
-	return base + ".jpg"
+	return fmt.Sprintf("%s%02d%s", prefix, seq, extForMIME(mime))
+}
+
+func extForMIME(mime string) string {
+	switch mime {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/heic", "image/heif":
+		return ".heic"
+	case "application/pdf":
+		return ".pdf"
+	case "text/plain":
+		return ".txt"
+	default:
+		return ""
+	}
 }
 
 func scaleImage(src image.Image, edge int) image.Image {

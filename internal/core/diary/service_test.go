@@ -401,8 +401,8 @@ func TestAddAttachmentStoresBytesAndPreview(t *testing.T) {
 	if stored.Revision != 2 {
 		t.Fatalf("revision = %d, want 2", stored.Revision)
 	}
-	if stored.Attachment.Name != "photo.jpg" || stored.Attachment.MIME != "image/jpeg" {
-		t.Fatalf("stored = %s %s, want jpeg", stored.Attachment.Name, stored.Attachment.MIME)
+	if stored.Attachment.Name != "20261001-01.jpg" || stored.Attachment.MIME != "image/jpeg" {
+		t.Fatalf("stored = %s %s, want 20261001-01.jpg image/jpeg", stored.Attachment.Name, stored.Attachment.MIME)
 	}
 	if _, format, err := image.DecodeConfig(bytes.NewReader(mustRead(t, fs, stored.Attachment.Path))); err != nil || format != "jpeg" {
 		t.Fatalf("on disk format = %s err=%v", format, err)
@@ -421,10 +421,21 @@ func TestAddAttachmentStoresBytesAndPreview(t *testing.T) {
 		t.Fatal("stored image is empty")
 	}
 
+	second, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID: "att-seq", EntryID: entryID, ExpectedRevision: stored.Revision,
+		Name: "camera.png", MIME: "image/png", ContentBase64: base64.StdEncoding.EncodeToString(png),
+	})
+	if err != nil {
+		t.Fatalf("second image: %v", err)
+	}
+	if second.Attachment.Name != "20261001-02.jpg" {
+		t.Fatalf("second name = %s", second.Attachment.Name)
+	}
+
 	note, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
 		RequestID:        "att-2",
 		EntryID:          entryID,
-		ExpectedRevision: stored.Revision,
+		ExpectedRevision: second.Revision,
 		Name:             "note.txt",
 		MIME:             "text/plain",
 		ContentBase64:    base64.StdEncoding.EncodeToString([]byte("hello file")),
@@ -446,8 +457,8 @@ func TestAddAttachmentStoresBytesAndPreview(t *testing.T) {
 	if listed.Entries[0].Revision != note.Revision {
 		t.Fatalf("listed revision = %d, want %d", listed.Entries[0].Revision, note.Revision)
 	}
-	if len(listed.Entries[0].Attachments) != 2 {
-		t.Fatalf("listed attachments = %d", len(listed.Entries[0].Attachments))
+	if len(listed.Entries[0].Attachments) != 3 {
+		t.Fatalf("listed attachments = %d, want 3", len(listed.Entries[0].Attachments))
 	}
 
 	again, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{

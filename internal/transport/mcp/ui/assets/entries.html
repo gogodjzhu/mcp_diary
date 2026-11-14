@@ -219,24 +219,6 @@
         border-radius: 12px;
         background: var(--diary-bg);
       }
-      .file-main {
-        display: flex;
-        flex: 1;
-        min-width: 0;
-        flex-direction: column;
-        gap: 2px;
-      }
-      .file-name {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: 13px;
-        font-weight: 550;
-      }
-      .file-meta {
-        color: var(--diary-muted);
-        font-size: 11px;
-      }
       .thumb {
         display: block;
         width: 52px;
@@ -261,6 +243,7 @@
       .file-actions {
         display: flex;
         flex: none;
+        margin-left: auto;
         gap: 6px;
       }
       .file-actions .btn {
@@ -363,9 +346,6 @@
         var notes = {};
         // 8 MiB decoded. Base64 adds a third, and MCP tool arguments are JSON.
         var maxBytes = 8 * 1024 * 1024;
-        // Pictures larger than this are scaled down before upload. The card
-        // has no image library, so this uses the canvas the host already allows.
-        var compressAt = 5 * 1024 * 1024;
 
         function noteOn(entryID, text, isError) {
           notes[entryID] = { text: text, error: !!isError };
@@ -509,10 +489,6 @@
               var mark = B.el("span", "file-mark", fileLabel(file));
               item.appendChild(mark);
             }
-            var main = B.el("div", "file-main");
-            main.appendChild(B.el("span", "file-name", file.name || file.file_id));
-            main.appendChild(B.el("span", "file-meta", fileSize(file.size)));
-            item.appendChild(main);
             var row = item;
             var actions = B.el("div", "file-actions");
             var download = B.el("button", "btn", "下载");
@@ -538,63 +514,6 @@
 
         function isImage(file) {
           return !!(file && file.type && file.type.indexOf("image/") === 0 && file.type !== "image/svg+xml");
-        }
-
-        function jpegName(name) {
-          var base = String(name || "photo").replace(/\.[^.]+$/, "");
-          return base + ".jpg";
-        }
-
-        // fitImage draws the picture into a canvas no wider than maxEdge and
-        // exports JPEG, lowering quality until the result is under the cap.
-        function fitImage(file) {
-          return new Promise(function (resolve, reject) {
-            var url = URL.createObjectURL(file);
-            var img = new Image();
-            img.onload = function () {
-              URL.revokeObjectURL(url);
-              var edge = 2048;
-              var quality = 0.8;
-              function attempt() {
-                var scale = Math.min(1, edge / Math.max(img.width, img.height));
-                var canvas = document.createElement("canvas");
-                canvas.width = Math.max(1, Math.round(img.width * scale));
-                canvas.height = Math.max(1, Math.round(img.height * scale));
-                var ctx = canvas.getContext("2d");
-                ctx.fillStyle = "#ffffff";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                canvas.toBlob(function (blob) {
-                  if (!blob) {
-                    reject(new Error("图片压缩失败"));
-                    return;
-                  }
-                  var smallEnough = blob.size <= compressAt;
-                  var gaveUp = edge <= 1024 && quality <= 0.5;
-                  if (smallEnough || gaveUp) {
-                    resolve(new File([blob], jpegName(file.name), { type: "image/jpeg" }));
-                    return;
-                  }
-                  if (quality > 0.5) quality -= 0.15;
-                  else { edge = Math.round(edge * 0.75); quality = 0.7; }
-                  attempt();
-                }, "image/jpeg", quality);
-              }
-              attempt();
-            };
-            img.onerror = function () {
-              URL.revokeObjectURL(url);
-              reject(new Error("无法读取这张图片"));
-            };
-            img.src = url;
-          });
-        }
-
-        function prepareFile(file) {
-          if (!isImage(file)) return Promise.resolve(file);
-          // Always try for a JPEG under 5 MB. If this widget cannot decode the
-          // picture, upload the original; the server converts it again.
-          return fitImage(file).catch(function () { return file; });
         }
 
         function readFile(file) {
@@ -623,17 +542,16 @@
             paint();
             return;
           }
+          if (file.size > maxBytes) {
+            noteOn(entry.entry_id, "文件超过 8 MB，请换一个小一些的。", true);
+            paint();
+            return;
+          }
           if (uploading) return;
           uploading = entry.entry_id;
-          noteOn(entry.entry_id, isImage(file) && file.size > compressAt ? "正在压缩图片…" : "正在上传…");
+          noteOn(entry.entry_id, "正在上传…");
           paint();
-          prepareFile(file)
-            .then(function (ready) {
-              if (ready.size > maxBytes) {
-                return Promise.reject(new Error("压缩后仍超过 8 MB，请换一张小一些的图片"));
-              }
-              return readFile(ready);
-            })
+          readFile(file)
             .then(function (encoded) {
               return window.diary
                 .callTool("addDiaryAttachment", {
