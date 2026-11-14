@@ -334,8 +334,14 @@
         var loads = B.sequence();
         var picker = document.getElementById("picker");
         var pickerEntry = "";
+        var notes = {};
         // 8 MiB decoded. Base64 adds a third, and MCP tool arguments are JSON.
         var maxBytes = 8 * 1024 * 1024;
+
+        function noteOn(entryID, text, isError) {
+          notes[entryID] = { text: text, error: !!isError };
+          setToast(text, isError);
+        }
 
         function setState(text, isError) {
           state.textContent = text || "";
@@ -428,6 +434,8 @@
             upload.disabled = uploading === entry.entry_id || busy === entry.entry_id;
             upload.setAttribute("data-action", "upload");
             card.appendChild(upload);
+            var note = notes[entry.entry_id];
+            if (note) card.appendChild(B.el("span", note.error ? "toast error" : "toast", note.text));
             var hint = B.el("span", "meta", entry.revision ? "收起 · v" + entry.revision : "收起");
             hint.style.marginTop = "6px";
             card.appendChild(hint);
@@ -528,7 +536,7 @@
             })
             .then(function (encoded) {
               uploading = "";
-              setToast("已添加到 " + B.formatDate(entry.diary_date) + "：" + encoded.name);
+              noteOn(entry.entry_id, "已添加 " + encoded.name);
               return load(data ? data.page : 1).then(function () {
                 return window.diary.updateModelContext(
                   [{ type: "text", text: "用户在日记列表里给 " + entry.diary_date + " 添加了文件 " + encoded.name + "（" + encoded.mime + "）。" }],
@@ -539,11 +547,12 @@
             .catch(function (err) {
               uploading = "";
               var code = err && err.code;
+              var message = err && err.message ? err.message : String(err);
               if (code === 409) {
-                setToast("这篇日记刚被改过，请展开后重试。", true);
+                noteOn(entry.entry_id, "这篇日记刚被改过，请再试一次。", true);
                 return load(data ? data.page : 1);
               }
-              setToast("上传失败：" + (err && err.message ? err.message : String(err)), true);
+              noteOn(entry.entry_id, "上传失败：" + message, true);
               paint();
             });
         }

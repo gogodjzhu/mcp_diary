@@ -110,6 +110,7 @@ func TestEntriesViewHasNoRaceProneReload(t *testing.T) {
 		"deleteDiaryEntry",
 		"addDiaryAttachment",
 		"type=\"file\"",
+		"noteOn(",
 		"expected_revision",
 		"updateModelContext(",
 		"B.sequence()",
@@ -130,6 +131,7 @@ func TestBridgeExposesToolResultStream(t *testing.T) {
 		"parseResult",
 		"sequence",
 		"updateModelContext",
+		"o.callTool(name, payload)",
 		"ui/update-model-context",
 	} {
 		if !strings.Contains(js, want) {
