@@ -381,6 +381,11 @@ func SourceFrom(entries []diary.Entry) Source {
 	for _, e := range entries {
 		src.EntryIDs = append(src.EntryIDs, e.EntryID)
 		src.Dates = append(src.Dates, e.DiaryDate)
+		for _, att := range e.Attachments {
+			if att.FileID != "" {
+				src.EntryIDs = append(src.EntryIDs, att.FileID)
+			}
+		}
 		if e.Revision > src.Revision {
 			src.Revision = e.Revision
 		}
