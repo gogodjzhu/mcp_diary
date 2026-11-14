@@ -911,7 +911,7 @@ func extractText(mime string, raw []byte) string {
 
 // previewMaxEdge is the longest side of the thumbnail stored next to an
 // image attachment. The card renders this; the original file stays untouched.
-const previewMaxEdge = 480
+const previewMaxEdge = 96
 
 // imagePreview makes a small JPEG thumbnail so the diary card can show the
 // picture without a second request. Decoding failure leaves the card with the
@@ -1041,7 +1041,7 @@ func imagePreview(mime string, raw []byte) string {
 		}
 	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 70}); err != nil {
+	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 55}); err != nil {
 		return ""
 	}
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
@@ -1197,7 +1197,7 @@ func (s *Service) BackfillPreviews(ctx context.Context, fs *filesystem.Service) 
 		changed := false
 		for i := range entry.Attachments {
 			att := &entry.Attachments[i]
-			if att.Preview != "" || !strings.HasPrefix(att.MIME, "image/") || att.MIME == "image/svg+xml" || att.Path == "" {
+			if !strings.HasPrefix(att.MIME, "image/") || att.MIME == "image/svg+xml" || att.Path == "" {
 				continue
 			}
 			raw, err := fs.ReadFile(ctx, att.Path)
