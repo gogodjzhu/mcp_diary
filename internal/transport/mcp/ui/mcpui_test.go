@@ -111,6 +111,8 @@ func TestEntriesViewHasNoRaceProneReload(t *testing.T) {
 		"addDiaryAttachment",
 		"type=\"file\"",
 		"noteOn(",
+		"fitImage(",
+		"compressAt",
 		"expected_revision",
 		"updateModelContext(",
 		"B.sequence()",
