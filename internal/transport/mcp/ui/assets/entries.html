@@ -605,12 +605,18 @@
             .then(function (encoded) {
               uploading = "";
               noteOn(entry.entry_id, "已添加 " + encoded.name);
-              return load(data ? data.page : 1).then(function () {
-                return window.diary.updateModelContext(
-                  [{ type: "text", text: "用户在日记列表里给 " + entry.diary_date + " 添加了文件 " + encoded.name + "（" + encoded.mime + "）。" }],
-                  { entry_id: entry.entry_id, attached_file: encoded.name }
-                );
-              });
+              // Refresh is best-effort. The file is already stored, so a
+              // failed reload must not replace the success note.
+              return Promise.resolve(load(data ? data.page : 1))
+                .then(function () {
+                  return window.diary.updateModelContext(
+                    [{ type: "text", text: "用户在日记列表里给 " + entry.diary_date + " 添加了文件 " + encoded.name + "（" + encoded.mime + "）。" }],
+                    { entry_id: entry.entry_id, attached_file: encoded.name }
+                  );
+                })
+                .catch(function () {
+                  return null;
+                });
             })
             .catch(function (err) {
               uploading = "";
@@ -782,7 +788,7 @@
           deleting = "";
           if (!data) setState("加载中…");
           paint();
-          window.diary
+          return window.diary
             .callTool("listDiaryEntries", {
               request_id: B.uuid(),
               diary_date_from: query.diary_date_from || undefined,
@@ -797,8 +803,7 @@
               if (!data.entries.length && data.page > 1) {
                 // The last item on the last page was deleted: step back.
                 loads.cancel();
-                load(data.page - 1);
-                return;
+                return load(data.page - 1);
               }
               setState("");
               var focus = expanded;
