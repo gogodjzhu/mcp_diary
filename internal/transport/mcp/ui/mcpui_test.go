@@ -112,7 +112,7 @@ func TestEntriesViewHasNoRaceProneReload(t *testing.T) {
 		"type=\"file\"",
 		"noteOn(",
 		"fitImage(",
-		"view-file",
+		"download-file",
 		"getDiaryAttachment",
 		"compressAt",
 		"expected_revision",

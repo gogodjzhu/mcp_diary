@@ -237,11 +237,20 @@
         white-space: nowrap;
       }
       .thumb {
-        max-width: 100%;
-        max-height: 180px;
+        display: block;
+        width: 96px;
+        height: 96px;
+        object-fit: cover;
         border-radius: 6px;
-        object-fit: contain;
         background: var(--diary-card);
+      }
+      .file-actions {
+        display: flex;
+        gap: 6px;
+      }
+      .file-actions .btn {
+        padding: 3px 10px;
+        font-size: 12px;
       }
       .excerpt {
         margin: 0;
@@ -470,47 +479,32 @@
               var img = document.createElement("img");
               img.className = "thumb";
               img.alt = file.name || "图片";
-              img.src = "data:" + file.mime + ";base64," + file.preview;
+              img.src = "data:image/jpeg;base64," + file.preview;
               item.appendChild(img);
             }
             var row = B.el("div", "file-row");
             row.appendChild(B.el("span", "file-name", file.name || file.file_id));
             row.appendChild(B.el("span", "file-meta", fileSize(file.size)));
-            var remove = B.el("button", "icon-btn", "✕");
+            var actions = B.el("div", "file-actions");
+            var download = B.el("button", "btn", "下载");
+            download.type = "button";
+            download.setAttribute("data-action", "download-file");
+            download.setAttribute("data-file-id", file.file_id);
+            download.disabled = busy === entry.entry_id;
+            var remove = B.el("button", "btn", "删除");
             remove.type = "button";
-            remove.title = "移除这个文件";
-            remove.setAttribute("aria-label", "移除 " + (file.name || "文件"));
             remove.setAttribute("data-action", "remove-file");
             remove.setAttribute("data-file-id", file.file_id);
             remove.disabled = busy === entry.entry_id;
-            row.appendChild(remove);
+            actions.appendChild(download);
+            actions.appendChild(remove);
+            row.appendChild(actions);
             item.appendChild(row);
             if (file.content && (!file.mime || file.mime.indexOf("image/") !== 0)) {
               item.appendChild(B.el("pre", "excerpt", file.content));
             }
             box.appendChild(item);
           });
-          var pictures = files.filter(function (file) {
-            return file.mime && file.mime.indexOf("image/") === 0 && file.preview;
-          });
-          if (pictures.length) {
-            var strip = B.el("div", "thumbs");
-            pictures.forEach(function (file) {
-              var button = B.el("button", "thumb-btn");
-              button.type = "button";
-              button.title = "查看 " + (file.name || "图片");
-              button.setAttribute("aria-label", "查看 " + (file.name || "图片"));
-              button.setAttribute("data-action", "view-file");
-              button.setAttribute("data-file-id", file.file_id);
-              var img = document.createElement("img");
-              img.className = "thumb";
-              img.alt = file.name || "图片";
-              img.src = "data:image/jpeg;base64," + file.preview;
-              button.appendChild(img);
-              strip.appendChild(button);
-            });
-            box.insertBefore(strip, box.firstChild);
-          }
           return box;
         }
 
@@ -652,11 +646,6 @@
             });
         }
 
-        function closeViewer() {
-          var viewer = document.getElementById("viewer");
-          if (viewer) viewer.remove();
-        }
-
         function saveFile(name, mime, b64) {
           var binary = atob(b64);
           var bytes = new Uint8Array(binary.length);
@@ -672,52 +661,11 @@
           setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
         }
 
-        function showOriginal(entry, file, payload) {
-          closeViewer();
-          var viewer = B.el("div", "viewer");
-          viewer.id = "viewer";
-          viewer.setAttribute("role", "dialog");
-          viewer.setAttribute("aria-label", file.name || "原图");
-          var bar = B.el("div", "viewer-bar");
-          bar.appendChild(B.el("span", "viewer-name", file.name || file.file_id));
-          var download = B.el("button", "btn", "下载");
-          download.type = "button";
-          download.setAttribute("data-action", "download-original");
-          var close = B.el("button", "btn", "关闭");
-          close.type = "button";
-          close.setAttribute("data-action", "close-viewer");
-          bar.appendChild(download);
-          bar.appendChild(close);
-          viewer.appendChild(bar);
-          if (payload.mime && payload.mime.indexOf("image/") === 0) {
-            var img = document.createElement("img");
-            img.alt = file.name || "原图";
-            img.src = "data:" + payload.mime + ";base64," + payload.content_base64;
-            viewer.appendChild(img);
-          } else {
-            viewer.appendChild(B.el("p", null, "这个文件不是图片，可以下载查看。"));
-          }
-          viewer.addEventListener("click", function (event) {
-            event.stopPropagation();
-            var action = event.target && event.target.getAttribute && event.target.getAttribute("data-action");
-            if (action === "close-viewer" || event.target === viewer) closeViewer();
-            if (action === "download-original") saveFile(payload.name || file.name, payload.mime, payload.content_base64);
-          });
-          document.addEventListener("keydown", function onKey(event) {
-            if (event.key === "Escape") {
-              closeViewer();
-              document.removeEventListener("keydown", onKey);
-            }
-          });
-          document.body.appendChild(viewer);
-          close.focus();
-        }
-
-        function viewFile(entry, fileID) {
+        function downloadFile(entry, fileID) {
           var file = (entry.attachments || []).filter(function (f) { return f.file_id === fileID; })[0];
           if (!file || busy) return;
           busy = entry.entry_id;
-          noteOn(entry.entry_id, "正在打开原图…");
+          noteOn(entry.entry_id, "正在准备下载…");
           paint();
           window.diary
             .callTool("getDiaryAttachment", {
@@ -728,13 +676,13 @@
             .then(B.unwrap)
             .then(function (payload) {
               busy = "";
-              notes[entry.entry_id] = null;
+              saveFile((payload && payload.name) || file.name, payload && payload.mime, payload && payload.content_base64);
+              noteOn(entry.entry_id, "已开始下载 " + (file.name || "文件"));
               paint();
-              showOriginal(entry, file, payload || {});
             })
             .catch(function (err) {
               busy = "";
-              noteOn(entry.entry_id, "打开失败：" + (err && err.message ? err.message : String(err)), true);
+              noteOn(entry.entry_id, "下载失败：" + (err && err.message ? err.message : String(err)), true);
               paint();
             });
         }
@@ -969,10 +917,10 @@
             if (fileID) removeFile(entry, fileID, data.page || 1);
             return;
           }
-          if (action === "view-file") {
+          if (action === "download-file") {
             event.stopPropagation();
-            var viewID = actor && actor.getAttribute ? actor.getAttribute("data-file-id") : "";
-            if (viewID) viewFile(entry, viewID);
+            var downloadID = actor && actor.getAttribute ? actor.getAttribute("data-file-id") : "";
+            if (downloadID) downloadFile(entry, downloadID);
             return;
           }
           if (deleting === entryID) {
