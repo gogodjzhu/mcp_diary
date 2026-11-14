@@ -57,11 +57,11 @@
         position: relative;
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 6px;
         width: 100%;
-        padding: 10px 12px;
+        padding: 12px 14px;
         border: 1px solid var(--diary-border);
-        border-radius: var(--diary-radius);
+        border-radius: 14px;
         background: var(--diary-card);
         color: inherit;
         font: inherit;
@@ -168,11 +168,12 @@
       }
       .btn {
         border: 1px solid var(--diary-border);
-        background: transparent;
+        background: var(--diary-card);
         color: var(--diary-text);
-        border-radius: 8px;
-        padding: 3px 12px;
+        border-radius: 999px;
+        padding: 6px 14px;
         font: inherit;
+        font-size: 13px;
         cursor: pointer;
       }
       .btn.danger {
@@ -206,50 +207,66 @@
       .files {
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        margin-top: 8px;
+        gap: 8px;
+        margin-top: 10px;
       }
       .file {
         display: flex;
-        flex-direction: column;
-        gap: 4px;
-        padding: 6px 8px;
+        align-items: center;
+        gap: 10px;
+        padding: 8px;
         border: 1px solid var(--diary-border);
-        border-radius: 8px;
+        border-radius: 12px;
         background: var(--diary-bg);
       }
-      .file-row {
+      .file-main {
         display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .file-name {
         flex: 1;
         min-width: 0;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .file-name {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        font-size: 12px;
+        font-size: 13px;
+        font-weight: 550;
       }
       .file-meta {
         color: var(--diary-muted);
         font-size: 11px;
-        white-space: nowrap;
       }
       .thumb {
         display: block;
-        width: 96px;
-        height: 96px;
+        width: 52px;
+        height: 52px;
+        flex: none;
         object-fit: cover;
-        border-radius: 6px;
+        border-radius: 8px;
         background: var(--diary-card);
+      }
+      .file-mark {
+        display: grid;
+        width: 52px;
+        height: 52px;
+        flex: none;
+        place-items: center;
+        border-radius: 8px;
+        background: var(--diary-card);
+        color: var(--diary-muted);
+        font-size: 11px;
+        font-weight: 600;
       }
       .file-actions {
         display: flex;
+        flex: none;
         gap: 6px;
       }
       .file-actions .btn {
-        padding: 3px 10px;
+        min-width: 52px;
+        padding: 6px 10px;
+        border-radius: 999px;
         font-size: 12px;
       }
       .excerpt {
@@ -458,6 +475,13 @@
         }
 
 
+        function fileLabel(file) {
+          var name = String((file && file.name) || "");
+          var dot = name.lastIndexOf(".");
+          var ext = dot > 0 ? name.slice(dot + 1, dot + 5).toUpperCase() : "FILE";
+          return ext || "FILE";
+        }
+
         function fileSize(n) {
           n = Number(n) || 0;
           if (n < 1024) return n + " B";
@@ -481,10 +505,15 @@
               img.alt = file.name || "图片";
               img.src = "data:image/jpeg;base64," + file.preview;
               item.appendChild(img);
+            } else {
+              var mark = B.el("span", "file-mark", fileLabel(file));
+              item.appendChild(mark);
             }
-            var row = B.el("div", "file-row");
-            row.appendChild(B.el("span", "file-name", file.name || file.file_id));
-            row.appendChild(B.el("span", "file-meta", fileSize(file.size)));
+            var main = B.el("div", "file-main");
+            main.appendChild(B.el("span", "file-name", file.name || file.file_id));
+            main.appendChild(B.el("span", "file-meta", fileSize(file.size)));
+            item.appendChild(main);
+            var row = item;
             var actions = B.el("div", "file-actions");
             var download = B.el("button", "btn", "下载");
             download.type = "button";
@@ -498,8 +527,7 @@
             remove.disabled = busy === entry.entry_id;
             actions.appendChild(download);
             actions.appendChild(remove);
-            row.appendChild(actions);
-            item.appendChild(row);
+            item.appendChild(actions);
             if (file.content && (!file.mime || file.mime.indexOf("image/") !== 0)) {
               item.appendChild(B.el("pre", "excerpt", file.content));
             }
@@ -562,7 +590,9 @@
 
         function prepareFile(file) {
           if (!isImage(file) || file.size <= compressAt) return Promise.resolve(file);
-          return fitImage(file);
+          // HEIC and other formats the widget cannot decode still upload as-is.
+          // The server stores the original and skips a thumbnail it cannot make.
+          return fitImage(file).catch(function () { return file; });
         }
 
         function readFile(file) {
