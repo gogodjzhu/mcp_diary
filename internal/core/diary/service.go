@@ -20,6 +20,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
+
+	_ "github.com/gen2brain/heic"
 )
 
 const (
@@ -650,6 +652,10 @@ const (
 	// maxExtractBytes is how much of a text-like upload is copied into the
 	// metadata so the model can read it without a second round trip.
 	maxExtractBytes = 32 << 10
+
+	// jpegLimit is the largest JPEG the server keeps for an image upload.
+	// Every image is re-encoded, even one the widget already compressed.
+	jpegLimit = 5 << 20
 )
 
 // AddAttachmentIn is one file uploaded against a committed diary entry.
@@ -675,6 +681,11 @@ func (s *Service) AddAttachment(ctx context.Context, fs *filesystem.Service, in 
 	raw, err := decodeUpload(in.ContentBase64)
 	if err != nil {
 		return StoredAttachment{}, err
+	}
+	name := cleanFileName(in.Name)
+	mime := sniffMIME(in.MIME, raw)
+	if stored, storedMIME, storedName, ok := normalizeImage(mime, name, raw); ok {
+		raw, mime, name = stored, storedMIME, storedName
 	}
 
 	st, err := s.storeFor(ctx, fs)
@@ -708,11 +719,10 @@ func (s *Service) AddAttachment(ctx context.Context, fs *filesystem.Service, in 
 	fileID := newID("df")
 	rel := path.Join(filesDir, fileID)
 	sum := sha256.Sum256(raw)
-	mime := sniffMIME(in.MIME, raw)
 	now := st.now().In(s.loc)
 	att := Attachment{
 		FileID:    fileID,
-		Name:      cleanFileName(in.Name),
+		Name:      name,
 		MIME:      mime,
 		Size:      int64(len(raw)),
 		Path:      rel,
@@ -905,6 +915,72 @@ const previewMaxEdge = 480
 // imagePreview makes a small JPEG thumbnail so the diary card can show the
 // picture without a second request. Decoding failure leaves the card with the
 // file name only; the original bytes are already stored.
+
+// normalizeImage re-encodes every decodable image as a JPEG of at most
+// jpegLimit. A picture the widget could not compress is handled here; a
+// picture it already compressed is still re-encoded so the stored format is
+// always JPEG. Undecodable bytes return ok=false and are stored unchanged.
+func normalizeImage(mime, name string, raw []byte) ([]byte, string, string, bool) {
+	if !isRasterImage(mime) {
+		return nil, "", "", false
+	}
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, "", "", false
+	}
+	edge := max(img.Bounds().Dx(), img.Bounds().Dy())
+	if edge <= 0 {
+		return nil, "", "", false
+	}
+	quality := 85
+	for {
+		scaled := scaleImage(img, edge)
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, scaled, &jpeg.Options{Quality: quality}); err != nil {
+			return nil, "", "", false
+		}
+		if buf.Len() <= jpegLimit || (edge <= 1024 && quality <= 50) {
+			return buf.Bytes(), "image/jpeg", jpegName(name), true
+		}
+		if quality > 55 {
+			quality -= 15
+			continue
+		}
+		edge = max(1024, edge*3/4)
+		quality = 75
+	}
+}
+
+func isRasterImage(mime string) bool {
+	return strings.HasPrefix(mime, "image/") && mime != "image/svg+xml"
+}
+
+func jpegName(name string) string {
+	base := strings.TrimSuffix(path.Base(name), path.Ext(name))
+	if base == "" || base == "." {
+		base = "photo"
+	}
+	return base + ".jpg"
+}
+
+func scaleImage(src image.Image, edge int) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	nw, nh := fitEdge(w, h, edge)
+	if nw == w && nh == h {
+		return src
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
+	for y := 0; y < nh; y++ {
+		sy := b.Min.Y + y*h/nh
+		for x := 0; x < nw; x++ {
+			sx := b.Min.X + x*w/nw
+			dst.Set(x, y, src.At(sx, sy))
+		}
+	}
+	return dst
+}
+
 func imagePreview(mime string, raw []byte) string {
 	if !strings.HasPrefix(mime, "image/") || mime == "image/svg+xml" {
 		return ""

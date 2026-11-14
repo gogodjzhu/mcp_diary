@@ -401,8 +401,11 @@ func TestAddAttachmentStoresBytesAndPreview(t *testing.T) {
 	if stored.Revision != 2 {
 		t.Fatalf("revision = %d, want 2", stored.Revision)
 	}
-	if stored.Attachment.Name != "photo.png" {
-		t.Fatalf("name = %q, want basename only", stored.Attachment.Name)
+	if stored.Attachment.Name != "photo.jpg" || stored.Attachment.MIME != "image/jpeg" {
+		t.Fatalf("stored = %s %s, want jpeg", stored.Attachment.Name, stored.Attachment.MIME)
+	}
+	if _, format, err := image.DecodeConfig(bytes.NewReader(mustRead(t, fs, stored.Attachment.Path))); err != nil || format != "jpeg" {
+		t.Fatalf("on disk format = %s err=%v", format, err)
 	}
 	if !strings.HasPrefix(stored.Attachment.Path, ".mcp-diary/files/") {
 		t.Fatalf("path = %q, want files dir", stored.Attachment.Path)
@@ -414,8 +417,8 @@ func TestAddAttachmentStoresBytesAndPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bytes not written: %v", err)
 	}
-	if string(onDisk) != string(png) {
-		t.Fatalf("on disk = %q", onDisk)
+	if len(onDisk) == 0 {
+		t.Fatal("stored image is empty")
 	}
 
 	note, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
@@ -573,4 +576,13 @@ func tinyPNG(t *testing.T) []byte {
 		t.Fatalf("encode png: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func mustRead(t *testing.T, fs *filesystem.Service, rel string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(fs.Root(), filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	return b
 }

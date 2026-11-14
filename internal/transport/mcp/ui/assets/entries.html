@@ -569,7 +569,9 @@
                     reject(new Error("图片压缩失败"));
                     return;
                   }
-                  if (blob.size <= compressAt || (edge <= 1024 && quality <= 0.5)) {
+                  var smallEnough = blob.size <= compressAt;
+                  var gaveUp = edge <= 1024 && quality <= 0.5;
+                  if (smallEnough || gaveUp) {
                     resolve(new File([blob], jpegName(file.name), { type: "image/jpeg" }));
                     return;
                   }
@@ -589,9 +591,9 @@
         }
 
         function prepareFile(file) {
-          if (!isImage(file) || file.size <= compressAt) return Promise.resolve(file);
-          // HEIC and other formats the widget cannot decode still upload as-is.
-          // The server stores the original and skips a thumbnail it cannot make.
+          if (!isImage(file)) return Promise.resolve(file);
+          // Always try for a JPEG under 5 MB. If this widget cannot decode the
+          // picture, upload the original; the server converts it again.
           return fitImage(file).catch(function () { return file; });
         }
 
