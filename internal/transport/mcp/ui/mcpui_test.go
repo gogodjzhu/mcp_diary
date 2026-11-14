@@ -108,6 +108,8 @@ func TestEntriesViewHasNoRaceProneReload(t *testing.T) {
 		"onToolResult(",
 		"ask-delete",
 		"deleteDiaryEntry",
+		"addDiaryAttachment",
+		"type=\"file\"",
 		"expected_revision",
 		"updateModelContext(",
 		"B.sequence()",
@@ -138,8 +140,10 @@ func TestBridgeExposesToolResultStream(t *testing.T) {
 
 func TestUIOnlyToolsAreDeclared(t *testing.T) {
 	uiOnly := RegistryVisibility()
-	if _, ok := uiOnly["deleteDiaryEntry"]; !ok {
-		t.Fatal("deleteDiaryEntry must be app-only")
+	for _, name := range []string{"deleteDiaryEntry", "addDiaryAttachment", "removeDiaryAttachment"} {
+		if _, ok := uiOnly[name]; !ok {
+			t.Fatalf("%s must be app-only", name)
+		}
 	}
 	// Tools with the UI binding must never be app-only.
 	for name := range ToolMetas() {

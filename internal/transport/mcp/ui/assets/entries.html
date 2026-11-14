@@ -203,6 +203,59 @@
       .toast.error {
         color: var(--diary-danger);
       }
+      .files {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .file {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 6px 8px;
+        border: 1px solid var(--diary-border);
+        border-radius: 8px;
+        background: var(--diary-bg);
+      }
+      .file-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .file-name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+      }
+      .file-meta {
+        color: var(--diary-muted);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .thumb {
+        max-width: 100%;
+        max-height: 180px;
+        border-radius: 6px;
+        object-fit: contain;
+        background: var(--diary-card);
+      }
+      .excerpt {
+        margin: 0;
+        max-height: 96px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--diary-muted);
+        font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .upload {
+        align-self: flex-start;
+        margin-top: 8px;
+      }
       .empty {
         color: var(--diary-muted);
         border: 1px dashed var(--diary-border);
@@ -242,6 +295,7 @@
         <span class="count" id="count"></span>
       </div>
       <div class="cards" id="cards"></div>
+      <input type="file" id="picker" hidden />
       <div class="state" id="state">加载中…</div>
       <div class="toast" id="toast" hidden></div>
       <div class="pager" id="pager">
@@ -275,8 +329,13 @@
         // delete request is in flight. At most one card is in either state.
         var deleting = "";
         var busy = "";
+        var uploading = "";
         var loading = false;
         var loads = B.sequence();
+        var picker = document.getElementById("picker");
+        var pickerEntry = "";
+        // 8 MiB decoded. Base64 adds a third, and MCP tool arguments are JSON.
+        var maxBytes = 8 * 1024 * 1024;
 
         function setState(text, isError) {
           state.textContent = text || "";
@@ -306,6 +365,7 @@
           var bits = [];
           if (meta.lunar) bits.push(meta.lunar);
           if (meta.weather) bits.push(meta.weather);
+          if (entry.attachments && entry.attachments.length) bits.push(entry.attachments.length + " 个附件");
           if (entry.updated_at) {
             try {
               bits.push("更新 " + new Date(entry.updated_at).toLocaleDateString());
@@ -362,6 +422,12 @@
             card.appendChild(confirmNode(entry));
           } else if (expanded === entry.entry_id) {
             card.appendChild(B.el("div", "full", entry.content || ""));
+            card.appendChild(filesNode(entry));
+            var upload = B.el("button", "btn upload", uploading === entry.entry_id ? "上传中…" : "添加图片或文件");
+            upload.type = "button";
+            upload.disabled = uploading === entry.entry_id || busy === entry.entry_id;
+            upload.setAttribute("data-action", "upload");
+            card.appendChild(upload);
             var hint = B.el("span", "meta", entry.revision ? "收起 · v" + entry.revision : "收起");
             hint.style.marginTop = "6px";
             card.appendChild(hint);
@@ -369,6 +435,150 @@
             card.appendChild(B.el("div", "snippet", B.snippet(entry.content, 160) || "（空）"));
           }
           return card;
+        }
+
+
+        function fileSize(n) {
+          n = Number(n) || 0;
+          if (n < 1024) return n + " B";
+          if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10 * 1024 ? 1 : 0) + " KB";
+          return (n / (1024 * 1024)).toFixed(1) + " MB";
+        }
+
+        function filesNode(entry) {
+          var box = B.el("div", "files");
+          var files = entry.attachments || [];
+          if (!files.length) {
+            box.appendChild(B.el("span", "meta", "还没有附件。图片、文本和 PDF 都可以附在这篇日记上。"));
+            return box;
+          }
+          files.forEach(function (file) {
+            var item = B.el("div", "file");
+            item.setAttribute("data-file-id", file.file_id);
+            if (file.mime && file.mime.indexOf("image/") === 0 && file.preview) {
+              var img = document.createElement("img");
+              img.className = "thumb";
+              img.alt = file.name || "图片";
+              img.src = "data:" + file.mime + ";base64," + file.preview;
+              item.appendChild(img);
+            }
+            var row = B.el("div", "file-row");
+            row.appendChild(B.el("span", "file-name", file.name || file.file_id));
+            row.appendChild(B.el("span", "file-meta", fileSize(file.size)));
+            var remove = B.el("button", "icon-btn", "✕");
+            remove.type = "button";
+            remove.title = "移除这个文件";
+            remove.setAttribute("aria-label", "移除 " + (file.name || "文件"));
+            remove.setAttribute("data-action", "remove-file");
+            remove.setAttribute("data-file-id", file.file_id);
+            remove.disabled = busy === entry.entry_id;
+            row.appendChild(remove);
+            item.appendChild(row);
+            if (file.content && (!file.mime || file.mime.indexOf("image/") !== 0)) {
+              item.appendChild(B.el("pre", "excerpt", file.content));
+            }
+            box.appendChild(item);
+          });
+          return box;
+        }
+
+        function readFile(file) {
+          return new Promise(function (resolve, reject) {
+            var reader = new FileReader();
+            reader.onload = function () {
+              var value = String(reader.result || "");
+              var comma = value.indexOf(",");
+              resolve({
+                name: file.name || "file",
+                mime: file.type || "application/octet-stream",
+                content_base64: comma >= 0 ? value.slice(comma + 1) : value,
+              });
+            };
+            reader.onerror = function () {
+              reject(reader.error || new Error("读取文件失败"));
+            };
+            reader.readAsDataURL(file);
+          });
+        }
+
+        function uploadFile(entry, file) {
+          if (!file) return;
+          if (file.size > maxBytes) {
+            setToast("文件超过 8 MB，请换一个小一些的。", true);
+            return;
+          }
+          if (uploading) return;
+          uploading = entry.entry_id;
+          paint();
+          readFile(file)
+            .then(function (encoded) {
+              return window.diary
+                .callTool("addDiaryAttachment", {
+                  request_id: B.uuid(),
+                  entry_id: entry.entry_id,
+                  expected_revision: entry.revision,
+                  name: encoded.name,
+                  mime: encoded.mime,
+                  content_base64: encoded.content_base64,
+                })
+                .then(B.unwrap)
+                .then(function () {
+                  return encoded;
+                });
+            })
+            .then(function (encoded) {
+              uploading = "";
+              setToast("已添加到 " + B.formatDate(entry.diary_date) + "：" + encoded.name);
+              return load(data ? data.page : 1).then(function () {
+                return window.diary.updateModelContext(
+                  [{ type: "text", text: "用户在日记列表里给 " + entry.diary_date + " 添加了文件 " + encoded.name + "（" + encoded.mime + "）。" }],
+                  { entry_id: entry.entry_id, attached_file: encoded.name }
+                );
+              });
+            })
+            .catch(function (err) {
+              uploading = "";
+              var code = err && err.code;
+              if (code === 409) {
+                setToast("这篇日记刚被改过，请展开后重试。", true);
+                return load(data ? data.page : 1);
+              }
+              setToast("上传失败：" + (err && err.message ? err.message : String(err)), true);
+              paint();
+            });
+        }
+
+        function removeFile(entry, fileID, page) {
+          if (busy) return;
+          busy = entry.entry_id;
+          paint();
+          var file = (entry.attachments || []).filter(function (f) {
+            return f.file_id === fileID;
+          })[0];
+          window.diary
+            .callTool("removeDiaryAttachment", {
+              request_id: B.uuid(),
+              entry_id: entry.entry_id,
+              file_id: fileID,
+              expected_revision: entry.revision,
+            })
+            .then(B.unwrap)
+            .then(function () {
+              busy = "";
+              setToast("已移除 " + ((file && file.name) || "文件") + "。");
+              return load(page);
+            })
+            .catch(function (err) {
+              busy = "";
+              var code = err && err.code;
+              if (code === 404) {
+                setToast("这个文件已经不在了。", true);
+                return load(page);
+              }
+              if (code === 409) setToast("这篇日记刚被改过，请展开后重试。", true);
+              else setToast("移除失败：" + (err && err.message ? err.message : String(err)), true);
+              paint();
+            });
         }
 
         function paint() {
@@ -554,6 +764,20 @@
             askDelete(entryID);
             return;
           }
+          if (action === "upload") {
+            event.stopPropagation();
+            if (uploading) return;
+            pickerEntry = entryID;
+            picker.value = "";
+            picker.click();
+            return;
+          }
+          if (action === "remove-file") {
+            event.stopPropagation();
+            var fileID = event.target.getAttribute("data-file-id");
+            if (fileID) removeFile(entry, fileID, data.page || 1);
+            return;
+          }
           if (deleting === entryID) {
             if (action === "cancel") {
               deleting = "";
@@ -583,6 +807,17 @@
             deleting = "";
             paint();
           }
+        });
+
+        picker.addEventListener("change", function () {
+          var file = picker.files && picker.files[0];
+          var entryID = pickerEntry;
+          pickerEntry = "";
+          if (!file || !entryID || !data) return;
+          var entry = (data.entries || []).filter(function (e) {
+            return e.entry_id === entryID;
+          })[0];
+          if (entry) uploadFile(entry, file);
         });
 
         prev.addEventListener("click", function () {

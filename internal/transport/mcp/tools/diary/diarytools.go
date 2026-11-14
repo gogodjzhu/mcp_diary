@@ -40,6 +40,8 @@ func All(workspaces tools.WorkspaceProvider, svc *corediary.Service) []tools.Too
 		newUpdateDiaryEntry(workspaces, svc),
 		newListDiaryEntries(workspaces, svc),
 		newDeleteDiaryEntry(workspaces, svc),
+		newAddDiaryAttachment(workspaces, svc),
+		newRemoveDiaryAttachment(workspaces, svc),
 		newRenderDiaryEntries(workspaces, svc),
 	}
 }

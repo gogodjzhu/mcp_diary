@@ -159,19 +159,21 @@ MCP 只负责纯文本草稿和正式日记的存取；追问、整理、成稿�
 | `listDiaryEntries` | 按业务日期分页列出正式日记 | ✅ |
 | `renderDiaryEntries` | 同上查询，但带交互式卡片 UI（见下文） | ✅ |
 | `deleteDiaryEntry` | 永久删除正式日记（调用前需用户确认） | |
+| `addDiaryAttachment` | 给正式日记附加用户选中的文件（界面专用，模型不可见） | |
+| `removeDiaryAttachment` | 从正式日记移除一个附件并删除文件（界面专用） | |
 
 状态机：`draft -> committed` 或 `draft -> discarded`。终态不可回到草稿。同一用户同一 `diary_date` 只能有一篇正式日记。
 
-日记数据以 JSON 形式持久化在每个工作区的 `.mcp-diary/diary.json`，写入走沙箱文件服务的原子替换，用户之间完全隔离。
+日记数据以 JSON 形式持久化在每个工作区的 `.mcp-diary/diary.json`，写入走沙箱文件服务的原子替换，用户之间完全隔离。附件的字节放在同一工作区的 `.mcp-diary/files/`，JSON 里只留文件名、类型、大小和短预览。
 
 ## 交互式界面（MCP Apps）
 
 支持 [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) 的宿主（ChatGPT Connectors、Claude、VS Code Copilot 等）会把部分工具的结果渲染成内嵌界面：
 
-- `renderDiaryEntries` → 卡片列表：日期、农历、天气、正文摘要，点击展开全文，支持翻页，每张卡片右上角可删除。
+- `renderDiaryEntries` → 卡片列表：日期、农历、天气、正文摘要，点击展开全文，支持翻页。展开后可以添加图片或文件；每张卡片右上角可删除。
 - `getDiaryEntry` → 单篇阅读卡片。
 
-删除是两步确认的：点卡片右上角的 ✕ 只会展开确认条（「删除 2026年10月18日星期日 的日记？删除后无法恢复。」），再点「删除」才会真正调用 `deleteDiaryEntry`；「取消」或 Esc 退出。删除成功后列表就地刷新（若当前页因此变空会自动回到上一页），并通过 `ui/update-model-context` 告诉模型哪篇日记已被删除；冲突（409）或已被别处删除（404）会在界面上说明原因。`deleteDiaryEntry` 声明为界面专用（`_meta.ui.visibility=["app"]`、`_meta["openai/visibility"]="private"`），模型看不到它，因此不存在模型绕过确认直接删除的路径；非 UI 客户端仍按原有工具调用方式使用。
+删除是两步确认的：点卡片右上角的 ✕ 只会展开确认条（「删除 2026年10月18日星期日 的日记？删除后无法恢复。」），再点「删除」才会真正调用 `deleteDiaryEntry`；「取消」或 Esc 退出。删除成功后列表就地刷新（若当前页因此变空会自动回到上一页），并通过 `ui/update-model-context` 告诉模型哪篇日记已被删除；冲突（409）或已被别处删除（404）会在界面上说明原因。`deleteDiaryEntry`、`addDiaryAttachment`、`removeDiaryAttachment` 都声明为界面专用（`_meta.ui.visibility=["app"]`、`_meta["openai/visibility"]="private"`），模型看不到它们。上传由卡片里的文件选择框读取用户选中的文件，经 MCP Apps 桥以 base64 交给 `addDiaryAttachment`，不另开 HTTP 接口，因此沿用同一次 OAuth 身份。单文件上限 8 MiB；小图片在卡片里直接预览，文本附件带一段摘录。
 
 实现要点：
 

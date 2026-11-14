@@ -2,11 +2,17 @@ package diary
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gogodjzhu/mcp-diary/internal/core/filesystem"
 )
@@ -16,6 +22,7 @@ const (
 	codeBadRequest = 400
 	codeNotFound   = 404
 	codeConflict   = 409
+	codeTooLarge   = 413
 	codeInternal   = 500
 )
 
@@ -542,12 +549,14 @@ func (s *Service) ListEntries(ctx context.Context, fs *filesystem.Service, in Li
 	summaries := make([]EntrySummary, 0, len(items))
 	for _, e := range items {
 		summaries = append(summaries, EntrySummary{
-			EntryID:   e.EntryID,
-			DiaryDate: e.DiaryDate,
-			Content:   e.Content,
-			Meta:      e.Meta,
-			CreatedAt: e.CreatedAt,
-			UpdatedAt: e.UpdatedAt,
+			EntryID:     e.EntryID,
+			DiaryDate:   e.DiaryDate,
+			Content:     e.Content,
+			Revision:    e.Revision,
+			Meta:        e.Meta,
+			Attachments: append([]Attachment(nil), e.Attachments...),
+			CreatedAt:   e.CreatedAt,
+			UpdatedAt:   e.UpdatedAt,
 		})
 	}
 	out := EntryList{
@@ -599,6 +608,7 @@ func (s *Service) DeleteEntry(ctx context.Context, fs *filesystem.Service, in De
 		return DeletedEntry{}, errf(codeConflict, "revision conflict")
 	}
 	date := entry.DiaryDate
+	files := attachmentPaths(entry)
 	delete(st.data.Entries, in.EntryID)
 	if st.data.DateEntries[entry.DiaryDate] == in.EntryID {
 		delete(st.data.DateEntries, entry.DiaryDate)
@@ -612,8 +622,298 @@ func (s *Service) DeleteEntry(ctx context.Context, fs *filesystem.Service, in De
 		return DeletedEntry{}, err
 	}
 	st.mu.Unlock()
+	for _, rel := range files {
+		_ = fs.Delete(ctx, rel, false)
+	}
 	s.emitChange(fs, date)
 	return out, nil
+}
+
+const (
+	// filesDir is the workspace directory that holds uploaded file bytes.
+	// Metadata stays in diary.json; the bytes never do.
+	filesDir = ".mcp-diary/files"
+
+	// maxAttachmentBytes is the largest single upload. MCP tool arguments are
+	// JSON, so the practical ceiling is the encoded argument, not this number.
+	maxAttachmentBytes = 8 << 20
+
+	// maxAttachmentsPerEntry keeps one diary entry from accumulating an
+	// unbounded file list.
+	maxAttachmentsPerEntry = 20
+
+	// maxExtractBytes is how much of a text-like upload is copied into the
+	// metadata so the model can read it without a second round trip.
+	maxExtractBytes = 32 << 10
+)
+
+// AddAttachmentIn is one file uploaded against a committed diary entry.
+type AddAttachmentIn struct {
+	RequestID        string
+	EntryID          string
+	ExpectedRevision int
+	Name             string
+	MIME             string
+	ContentBase64    string
+}
+
+// AddAttachment stores an uploaded file in the caller's workspace and records
+// it on the entry. The same request_id returns the stored attachment without
+// writing the bytes again.
+func (s *Service) AddAttachment(ctx context.Context, fs *filesystem.Service, in AddAttachmentIn) (StoredAttachment, error) {
+	if err := requireRequestID(in.RequestID); err != nil {
+		return StoredAttachment{}, err
+	}
+	if strings.TrimSpace(in.EntryID) == "" {
+		return StoredAttachment{}, errf(codeBadRequest, "entry_id is required")
+	}
+	raw, err := decodeUpload(in.ContentBase64)
+	if err != nil {
+		return StoredAttachment{}, err
+	}
+
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return StoredAttachment{}, wrapInternal(err)
+	}
+	st.mu.Lock()
+
+	var cached StoredAttachment
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		st.mu.Unlock()
+		return StoredAttachment{}, err
+	} else if ok {
+		st.mu.Unlock()
+		return cached, nil
+	}
+	entry := st.data.Entries[in.EntryID]
+	if entry == nil {
+		st.mu.Unlock()
+		return StoredAttachment{}, errf(codeNotFound, "entry %s not found", in.EntryID)
+	}
+	if entry.Revision != in.ExpectedRevision {
+		st.mu.Unlock()
+		return StoredAttachment{}, errf(codeConflict, "revision conflict")
+	}
+	if len(entry.Attachments) >= maxAttachmentsPerEntry {
+		st.mu.Unlock()
+		return StoredAttachment{}, errf(codeBadRequest, "entry already has %d attachments", maxAttachmentsPerEntry)
+	}
+
+	fileID := newID("df")
+	rel := path.Join(filesDir, fileID)
+	sum := sha256.Sum256(raw)
+	mime := sniffMIME(in.MIME, raw)
+	now := st.now().In(s.loc)
+	att := Attachment{
+		FileID:    fileID,
+		Name:      cleanFileName(in.Name),
+		MIME:      mime,
+		Size:      int64(len(raw)),
+		Path:      rel,
+		SHA256:    hex.EncodeToString(sum[:]),
+		Content:   extractText(mime, raw),
+		Preview:   imagePreview(mime, raw),
+		CreatedAt: now,
+	}
+
+	// Write the bytes before the metadata. A crash between the two leaves an
+	// unreferenced file, which is recoverable; the reverse would advertise a
+	// file that does not exist.
+	if _, err := fs.WriteAtomic(ctx, rel, string(raw), filesystem.WriteOptions{CreateDirs: true, Mode: 0o600}); err != nil {
+		st.mu.Unlock()
+		return StoredAttachment{}, wrapInternal(err)
+	}
+	entry.Attachments = append(entry.Attachments, att)
+	entry.Revision++
+	entry.UpdatedAt = now
+	out := StoredAttachment{EntryID: entry.EntryID, Revision: entry.Revision, Attachment: att}
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
+		st.mu.Unlock()
+		return StoredAttachment{}, err
+	}
+	date := entry.DiaryDate
+	st.mu.Unlock()
+	s.emitChange(fs, date)
+	return out, nil
+}
+
+// RemoveAttachmentIn detaches one uploaded file from a committed entry.
+type RemoveAttachmentIn struct {
+	RequestID        string
+	EntryID          string
+	FileID           string
+	ExpectedRevision int
+}
+
+// RemoveAttachment drops the file from the entry and deletes its bytes.
+func (s *Service) RemoveAttachment(ctx context.Context, fs *filesystem.Service, in RemoveAttachmentIn) (RemovedAttachment, error) {
+	if err := requireRequestID(in.RequestID); err != nil {
+		return RemovedAttachment{}, err
+	}
+	if strings.TrimSpace(in.EntryID) == "" {
+		return RemovedAttachment{}, errf(codeBadRequest, "entry_id is required")
+	}
+	if strings.TrimSpace(in.FileID) == "" {
+		return RemovedAttachment{}, errf(codeBadRequest, "file_id is required")
+	}
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return RemovedAttachment{}, wrapInternal(err)
+	}
+	st.mu.Lock()
+
+	var cached RemovedAttachment
+	if ok, err := replayInto(st, in.RequestID, &cached); err != nil {
+		st.mu.Unlock()
+		return RemovedAttachment{}, err
+	} else if ok {
+		st.mu.Unlock()
+		return cached, nil
+	}
+	entry := st.data.Entries[in.EntryID]
+	if entry == nil {
+		st.mu.Unlock()
+		return RemovedAttachment{}, errf(codeNotFound, "entry %s not found", in.EntryID)
+	}
+	if entry.Revision != in.ExpectedRevision {
+		st.mu.Unlock()
+		return RemovedAttachment{}, errf(codeConflict, "revision conflict")
+	}
+	kept := make([]Attachment, 0, len(entry.Attachments))
+	var removed *Attachment
+	for i := range entry.Attachments {
+		if entry.Attachments[i].FileID == in.FileID && removed == nil {
+			cp := entry.Attachments[i]
+			removed = &cp
+			continue
+		}
+		kept = append(kept, entry.Attachments[i])
+	}
+	if removed == nil {
+		st.mu.Unlock()
+		return RemovedAttachment{}, errf(codeNotFound, "attachment %s not found", in.FileID)
+	}
+	entry.Attachments = kept
+	entry.Revision++
+	entry.UpdatedAt = st.now().In(s.loc)
+	out := RemovedAttachment{EntryID: entry.EntryID, FileID: in.FileID, Revision: entry.Revision, Removed: true}
+	if err := remember(ctx, st, in.RequestID, out); err != nil {
+		st.mu.Unlock()
+		return RemovedAttachment{}, err
+	}
+	rel := removed.Path
+	date := entry.DiaryDate
+	st.mu.Unlock()
+	if rel != "" {
+		_ = fs.Delete(ctx, rel, false)
+	}
+	s.emitChange(fs, date)
+	return out, nil
+}
+
+func attachmentPaths(entry *Entry) []string {
+	if entry == nil || len(entry.Attachments) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(entry.Attachments))
+	for _, att := range entry.Attachments {
+		if att.Path != "" {
+			out = append(out, att.Path)
+		}
+	}
+	return out
+}
+
+// decodeUpload accepts standard or raw base64 and rejects empty or oversized
+// payloads before they touch the workspace.
+func decodeUpload(encoded string) ([]byte, error) {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil, errf(codeBadRequest, "content_base64 is required")
+	}
+	if strings.HasPrefix(encoded, "data:") {
+		if i := strings.Index(encoded, ","); i >= 0 {
+			encoded = encoded[i+1:]
+		}
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		raw, err = base64.RawStdEncoding.DecodeString(encoded)
+	}
+	if err != nil {
+		return nil, errf(codeBadRequest, "content_base64 is not valid base64")
+	}
+	if len(raw) == 0 {
+		return nil, errf(codeBadRequest, "file is empty")
+	}
+	if len(raw) > maxAttachmentBytes {
+		return nil, errf(codeTooLarge, "file exceeds %d bytes", maxAttachmentBytes)
+	}
+	return raw, nil
+}
+
+// cleanFileName keeps a display name only. The stored path never uses it, so a
+// hostile name cannot escape the files directory.
+func cleanFileName(name string) string {
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return "file"
+	}
+	if utf8.RuneCountInString(name) > 120 {
+		runes := []rune(name)
+		name = string(runes[len(runes)-120:])
+	}
+	return name
+}
+
+// sniffMIME trusts a declared type only when it looks like one. Otherwise it
+// sniffs the bytes, so a renamed executable is not stored as an image.
+func sniffMIME(declared string, raw []byte) string {
+	declared = strings.ToLower(strings.TrimSpace(declared))
+	if i := strings.Index(declared, ";"); i >= 0 {
+		declared = strings.TrimSpace(declared[:i])
+	}
+	if strings.Count(declared, "/") == 1 && !strings.ContainsAny(declared, " \t") {
+		return declared
+	}
+	return http.DetectContentType(raw)
+}
+
+// extractText copies a short prefix of text-like uploads into the metadata so
+// the model can quote the file. Binary uploads stay bytes-only.
+func extractText(mime string, raw []byte) string {
+	if !isTextMIME(mime) || !utf8.Valid(raw) {
+		return ""
+	}
+	if len(raw) > maxExtractBytes {
+		raw = raw[:maxExtractBytes]
+	}
+	return string(raw)
+}
+
+// imagePreview keeps a small image inline so the diary card can show it
+// without a second request. Larger images stay as files; the card shows the name.
+func imagePreview(mime string, raw []byte) string {
+	if !strings.HasPrefix(mime, "image/") || mime == "image/svg+xml" {
+		return ""
+	}
+	if len(raw) > maxExtractBytes {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func isTextMIME(mime string) bool {
+	if strings.HasPrefix(mime, "text/") {
+		return true
+	}
+	switch mime {
+	case "application/json", "application/xml", "application/javascript", "image/svg+xml":
+		return true
+	}
+	return strings.HasSuffix(mime, "+json") || strings.HasSuffix(mime, "+xml")
 }
 
 func (s *Service) ListCommitted(ctx context.Context, fs *filesystem.Service) ([]Entry, error) {

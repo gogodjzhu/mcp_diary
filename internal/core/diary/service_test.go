@@ -1,9 +1,12 @@
 package diary
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -373,4 +376,187 @@ func TestInvalidDate(t *testing.T) {
 	} else if de, ok := IsError(err); !ok || de.Code != 400 {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+func TestAddAttachmentStoresBytesAndPreview(t *testing.T) {
+	svc, fs, _ := testService(t)
+	ctx := context.Background()
+	entryID := committedEntry(t, svc, fs, "2026-10-03", "with a photo")
+
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01}
+	stored, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID:        "att-1",
+		EntryID:          entryID,
+		ExpectedRevision: 1,
+		Name:             "../secrets/../../photo.png",
+		MIME:             "image/png",
+		ContentBase64:    base64.StdEncoding.EncodeToString(png),
+	})
+	if err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+	if stored.Revision != 2 {
+		t.Fatalf("revision = %d, want 2", stored.Revision)
+	}
+	if stored.Attachment.Name != "photo.png" {
+		t.Fatalf("name = %q, want basename only", stored.Attachment.Name)
+	}
+	if !strings.HasPrefix(stored.Attachment.Path, ".mcp-diary/files/") {
+		t.Fatalf("path = %q, want files dir", stored.Attachment.Path)
+	}
+	if stored.Attachment.Preview == "" {
+		t.Fatal("small image should carry a preview")
+	}
+	onDisk, err := os.ReadFile(filepath.Join(fs.Root(), filepath.FromSlash(stored.Attachment.Path)))
+	if err != nil {
+		t.Fatalf("bytes not written: %v", err)
+	}
+	if string(onDisk) != string(png) {
+		t.Fatalf("on disk = %q", onDisk)
+	}
+
+	note, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID:        "att-2",
+		EntryID:          entryID,
+		ExpectedRevision: stored.Revision,
+		Name:             "note.txt",
+		MIME:             "text/plain",
+		ContentBase64:    base64.StdEncoding.EncodeToString([]byte("hello file")),
+	})
+	if err != nil {
+		t.Fatalf("add text: %v", err)
+	}
+	if note.Attachment.Content != "hello file" {
+		t.Fatalf("extracted = %q", note.Attachment.Content)
+	}
+	if note.Attachment.Preview != "" {
+		t.Fatal("text file should not get an image preview")
+	}
+
+	listed, err := svc.ListEntries(ctx, fs, ListEntriesIn{RequestID: "att-3"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if listed.Entries[0].Revision != note.Revision {
+		t.Fatalf("listed revision = %d, want %d", listed.Entries[0].Revision, note.Revision)
+	}
+	if len(listed.Entries[0].Attachments) != 2 {
+		t.Fatalf("listed attachments = %d", len(listed.Entries[0].Attachments))
+	}
+
+	again, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID:        "att-1",
+		EntryID:          entryID,
+		ExpectedRevision: 1,
+		Name:             "ignored.png",
+		ContentBase64:    base64.StdEncoding.EncodeToString(png),
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if again.Attachment.FileID != stored.Attachment.FileID {
+		t.Fatal("replayed request wrote a second file")
+	}
+}
+
+func TestRemoveAttachmentDeletesBytes(t *testing.T) {
+	svc, fs, _ := testService(t)
+	ctx := context.Background()
+	entryID := committedEntry(t, svc, fs, "2026-10-04", "drop me")
+	stored, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID:        "rm-1",
+		EntryID:          entryID,
+		ExpectedRevision: 1,
+		Name:             "note.txt",
+		MIME:             "text/plain",
+		ContentBase64:    base64.StdEncoding.EncodeToString([]byte("gone")),
+	})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	rel := filepath.Join(fs.Root(), filepath.FromSlash(stored.Attachment.Path))
+	removed, err := svc.RemoveAttachment(ctx, fs, RemoveAttachmentIn{
+		RequestID:        "rm-2",
+		EntryID:          entryID,
+		FileID:           stored.Attachment.FileID,
+		ExpectedRevision: stored.Revision,
+	})
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if !removed.Removed || removed.Revision != stored.Revision+1 {
+		t.Fatalf("removed = %+v", removed)
+	}
+	if _, err := os.Stat(rel); !os.IsNotExist(err) {
+		t.Fatalf("file still present: %v", err)
+	}
+
+	again, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID:        "rm-3",
+		EntryID:          entryID,
+		ExpectedRevision: removed.Revision,
+		Name:             "keep.txt",
+		MIME:             "text/plain",
+		ContentBase64:    base64.StdEncoding.EncodeToString([]byte("stay")),
+	})
+	if err != nil {
+		t.Fatalf("readd: %v", err)
+	}
+	if _, err := svc.DeleteEntry(ctx, fs, DeleteEntryIn{RequestID: "rm-4", EntryID: entryID, ExpectedRevision: again.Revision}); err != nil {
+		t.Fatalf("delete entry: %v", err)
+	}
+	left := filepath.Join(fs.Root(), filepath.FromSlash(again.Attachment.Path))
+	if _, err := os.Stat(left); !os.IsNotExist(err) {
+		t.Fatalf("entry delete left the file: %v", err)
+	}
+}
+
+func TestAddAttachmentRejectsBadPayloads(t *testing.T) {
+	svc, fs, _ := testService(t)
+	ctx := context.Background()
+	entryID := committedEntry(t, svc, fs, "2026-10-05", "guard")
+
+	_, err := svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID: "bad-1", EntryID: entryID, ExpectedRevision: 1, Name: "a.txt", ContentBase64: "!!!!",
+	})
+	if de, ok := IsError(err); !ok || de.Code != 400 {
+		t.Fatalf("bad base64 = %v", err)
+	}
+	_, err = svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID: "bad-2", EntryID: entryID, ExpectedRevision: 99, Name: "a.txt",
+		ContentBase64: base64.StdEncoding.EncodeToString([]byte("ok")),
+	})
+	if de, ok := IsError(err); !ok || de.Code != 409 {
+		t.Fatalf("stale revision = %v", err)
+	}
+	big := bytes.Repeat([]byte("a"), maxAttachmentBytes+1)
+	_, err = svc.AddAttachment(ctx, fs, AddAttachmentIn{
+		RequestID: "bad-3", EntryID: entryID, ExpectedRevision: 1, Name: "big.bin",
+		ContentBase64: base64.StdEncoding.EncodeToString(big),
+	})
+	if de, ok := IsError(err); !ok || de.Code != 413 {
+		t.Fatalf("oversize = %v", err)
+	}
+}
+
+func committedEntry(t *testing.T, svc *Service, fs *filesystem.Service, date, content string) string {
+	t.Helper()
+	ctx := context.Background()
+	created, err := svc.CreateSession(ctx, fs, CreateSessionIn{RequestID: "seed-" + date, DiaryDate: date})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	sess := mustSession(t, created)
+	if _, err := svc.AppendSession(ctx, fs, AppendSessionIn{
+		RequestID: "seed-append-" + date, SessionID: sess.SessionID, ExpectedRevision: 1, Content: content,
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	committed, err := svc.CommitSession(ctx, fs, CommitSessionIn{
+		RequestID: "seed-commit-" + date, SessionID: sess.SessionID, ExpectedRevision: 2,
+	})
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return committed.EntryID
 }
