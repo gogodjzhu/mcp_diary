@@ -340,7 +340,7 @@ func TestDiaryMCPEndToEnd(t *testing.T) {
 		t.Fatalf("renderDiaryEntries payload = %v", rendered["data"])
 	}
 
-	uiRes, err := c.ReadResource(ctx, mcp.ReadResourceRequest{Params: mcp.ReadResourceParams{URI: "ui://mcp-diary/entries-v5.html"}})
+	uiRes, err := c.ReadResource(ctx, mcp.ReadResourceRequest{Params: mcp.ReadResourceParams{URI: "ui://mcp-diary/entries-v6.html"}})
 	if err != nil {
 		t.Fatalf("ReadResource: %v", err)
 	}

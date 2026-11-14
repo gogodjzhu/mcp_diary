@@ -33,13 +33,18 @@ func newBackfillPreviewsCommand() *cobra.Command {
 					return err
 				}
 				n, err := svc.BackfillPreviews(context.Background(), fs)
+				if err != nil {
+					_ = fs.Close()
+					return fmt.Errorf("%s previews: %w", entry.Name(), err)
+				}
+				renamed, err := svc.StandardizeAttachmentNames(context.Background(), fs)
 				_ = fs.Close()
 				if err != nil {
-					return fmt.Errorf("%s: %w", entry.Name(), err)
+					return fmt.Errorf("%s names: %w", entry.Name(), err)
 				}
-				if n > 0 {
-					fmt.Printf("%s: %d\n", entry.Name(), n)
-					total += n
+				if n > 0 || renamed > 0 {
+					fmt.Printf("%s: previews %d, renamed %d\n", entry.Name(), n, renamed)
+					total += renamed
 				}
 			}
 			fmt.Printf("filled %d\n", total)

@@ -24,7 +24,7 @@ const (
 	// EntriesURI is the UI resource shown for a list of committed diary
 	// entries. Treat it as a cache key: publish a new URI when the HTML
 	// changes in a breaking way.
-	EntriesURI = "ui://mcp-diary/entries-v5.html"
+	EntriesURI = "ui://mcp-diary/entries-v6.html"
 
 	// entryURI is the UI resource that renders a single committed diary entry.
 	entryURI = "ui://mcp-diary/entry.html"

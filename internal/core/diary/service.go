@@ -1126,6 +1126,64 @@ func (s *Service) GetAttachment(ctx context.Context, fs *filesystem.Service, in 
 	}, nil
 }
 
+// StandardizeAttachmentNames renames existing attachments to the dated sequence
+// used for new uploads. The bytes are not touched. A name that already matches
+// the pattern is kept, and its number is not reused.
+func (s *Service) StandardizeAttachmentNames(ctx context.Context, fs *filesystem.Service) (int, error) {
+	st, err := s.storeFor(ctx, fs)
+	if err != nil {
+		return 0, wrapInternal(err)
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	renamed := 0
+	for _, entry := range st.data.Entries {
+		changed := false
+		for i := range entry.Attachments {
+			att := &entry.Attachments[i]
+			if canonicalName(att.Name) {
+				continue
+			}
+			when := att.CreatedAt
+			if when.IsZero() {
+				when = entry.CreatedAt
+			}
+			att.Name = attachmentName(entry, when.In(s.loc), att.MIME)
+			changed = true
+			renamed++
+		}
+		if changed {
+			entry.UpdatedAt = st.now().In(s.loc)
+		}
+	}
+	if renamed == 0 {
+		return 0, nil
+	}
+	if err := st.persistLocked(ctx); err != nil {
+		return 0, wrapInternal(err)
+	}
+	return renamed, nil
+}
+
+func canonicalName(name string) bool {
+	base := strings.TrimSuffix(path.Base(name), path.Ext(name))
+	if len(base) < 11 || base[8] != '-' {
+		return false
+	}
+	for i := 0; i < 8; i++ {
+		if base[i] < '0' || base[i] > '9' {
+			return false
+		}
+	}
+	for _, r := range base[9:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return base[9:] != ""
+}
+
 func (s *Service) BackfillPreviews(ctx context.Context, fs *filesystem.Service) (int, error) {
 	st, err := s.storeFor(ctx, fs)
 	if err != nil {
