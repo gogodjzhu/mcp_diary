@@ -13,12 +13,12 @@ all: build
 ## build: build the web UI and compile the server binary into bin/
 build: web-build
 	@mkdir -p $(BIN_DIR)
-	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD)
+	CGO_ENABLED=0 go build -tags nodynamic -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD)
 
 ## build-go: compile the server binary only (uses the committed web assets)
 build-go:
 	@mkdir -p $(BIN_DIR)
-	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD)
+	CGO_ENABLED=0 go build -tags nodynamic -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD)
 
 ## web-install: install the frontend dependencies
 web-install:

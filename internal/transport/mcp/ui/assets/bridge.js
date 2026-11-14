@@ -140,12 +140,21 @@
       var o = api();
       var call;
       if (o && typeof o.callTool === "function") {
-        // window.openai.callTool takes a single options object and may return
-        // the unwrapped structuredContent, so only trust it when it does.
-        call = Promise.resolve(o.callTool({ name: name, arguments: args || {} })).then(function (res) {
-          if (res && res.structuredContent !== undefined) return res;
-          if (res && (res.code !== undefined || res.isError)) return { structuredContent: res };
-          return res;
+        // ChatGPT's documented signature is callTool(name, args). Some hosts
+        // accept a single {name, arguments} object instead. Probe the function
+        // length, then fall back if the first shape says the name is missing.
+        var payload = args || {};
+        var primary = o.callTool.length === 1
+          ? o.callTool({ name: name, arguments: payload })
+          : o.callTool(name, payload);
+        call = Promise.resolve(primary).then(function (res) {
+          return normalizeToolResult(res);
+        }).catch(function (err) {
+          if (!isMissingName(err)) return Promise.reject(err);
+          var retry = o.callTool.length === 1
+            ? o.callTool(name, payload)
+            : o.callTool({ name: name, arguments: payload });
+          return Promise.resolve(retry).then(normalizeToolResult);
         });
       } else {
         call = request("tools/call", { name: name, arguments: args || {} });
@@ -268,6 +277,19 @@
 
   // resultCode extracts the mcp-diary error code from a tool result, so the
   // view can tell "already deleted" (404) from "changed elsewhere" (409).
+  // normalizeToolResult accepts either an MCP result or the unwrapped
+  // structured content some hosts return from window.openai.callTool.
+  function normalizeToolResult(res) {
+    if (res && res.structuredContent !== undefined) return res;
+    if (res && (res.code !== undefined || res.isError)) return { structuredContent: res };
+    return res;
+  }
+
+  function isMissingName(err) {
+    var text = err && err.message ? err.message : String(err || "");
+    return text.toLowerCase().indexOf("missing tool name") >= 0 || text.toLowerCase().indexOf("tool name") >= 0 && text.toLowerCase().indexOf("required") >= 0;
+  }
+
   function resultCode(result) {
     var payload = result;
     if (result && result.structuredContent !== undefined) payload = result.structuredContent;

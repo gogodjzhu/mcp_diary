@@ -27,7 +27,10 @@ COPY . .
 COPY --from=web /src/internal/transport/webui/dist ./internal/transport/webui/dist
 
 ARG VERSION=dev
+	# nodynamic keeps the HEIC decoder inside the binary instead of
+	# loading libheif from the host. CGO_ENABLED=0 keeps the binary static.
 RUN CGO_ENABLED=0 GOOS=linux go build \
+	    -tags nodynamic \
     -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/mcp-diary ./cmd/mcp-diary

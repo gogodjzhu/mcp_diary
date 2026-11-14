@@ -154,14 +154,18 @@ type SyncConfig struct {
 // Default returns a Config populated with the built-in defaults.
 func Default() Config {
 	return Config{
-		Name:                "mcp-diary",
-		Version:             "dev",
-		Transport:           TransportStreamableHTTP,
-		Addr:                ":8080",
-		EndpointPath:        "/mcp",
-		HeartbeatInterval:   30 * time.Second,
-		ReadHeaderTimeout:   10 * time.Second,
-		ReadTimeout:         60 * time.Second,
+		Name:              "mcp-diary",
+		Version:           "dev",
+		Transport:         TransportStreamableHTTP,
+		Addr:              ":8080",
+		EndpointPath:      "/mcp",
+		HeartbeatInterval: 30 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		// ReadTimeout covers the whole request, including a slow upload body.
+		// MCP Apps send a chosen file as base64 inside one JSON-RPC POST, which
+		// can take longer than a minute on a slow link. The body is already
+		// capped by MaxRequestBodyBytes, so leave the read deadline unset.
+		ReadTimeout:         0,
 		WriteTimeout:        0,
 		IdleTimeout:         120 * time.Second,
 		ShutdownTimeout:     15 * time.Second,

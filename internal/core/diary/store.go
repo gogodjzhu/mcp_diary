@@ -91,6 +91,9 @@ func cloneEntry(src *Entry) *Entry {
 	}
 	cp := *src
 	cp.Meta = cloneMeta(src.Meta)
+	if src.Attachments != nil {
+		cp.Attachments = append([]Attachment(nil), src.Attachments...)
+	}
 	return &cp
 }
 
