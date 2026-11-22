@@ -115,6 +115,7 @@ func New(cfg config.AuthConfig, endpointPath, storePath string, logger *slog.Log
 			AccessTokenTTL:                int64(cfg.AccessTokenTTL.Seconds()),
 			RefreshTokenTTL:               int64(cfg.RefreshTokenTTL.Seconds()),
 			SupportedScopes:               []string{"mcp"},
+			DisableDNSValidationStrict: true,
 		},
 		logger,
 		oauth.WithAuditor(security.NewAuditor(logger, true)),
